@@ -69,6 +69,15 @@ CARDS: list[dict[str, Any]] = [
         "input_schema": {"command": "str"},
         "output": "topics (nothing created)",
     },
+    {
+        "name": "ask",
+        "description": ("Answers any question from collected evidence "
+                         "plus the live web."),
+        "intents": ["ask.answer"],
+        "input_schema": {"question": "str", "scope": "'all' or 'inv:<id>'",
+                         "mode": "str", "parent_id": "int | null"},
+        "output": "queued job (work runs async)",
+    },
 ]
 
 
@@ -168,4 +177,14 @@ def _run(to: str, intent: str, payload: dict, db) -> dict[str, Any]:
     if to == "manager" and intent == "manager.parse":
         from . import manager as _m
         return _m.parse_command(payload.get("command", ""))
+    if to == "ask" and intent == "ask.answer":
+        from . import jobqueue
+        question = (payload.get("question") or "").strip()
+        if not question:
+            raise ValueError("question is required")
+        return jobqueue.enqueue(
+            "ask", {"question": question,
+                    "scope": payload.get("scope", "all"),
+                    "mode": payload.get("mode", "explain"),
+                    "parent_id": payload.get("parent_id")})
     raise ValueError(f"no handler for {to}/{intent}")

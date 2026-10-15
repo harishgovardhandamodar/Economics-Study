@@ -189,7 +189,8 @@ def _run_explain(payload: dict) -> dict:
         payload["investigation_id"], payload["question"],
         mode=payload.get("mode", "explain"),
         depth=payload.get("depth", "balanced"),
-        audience=payload.get("audience", "intermediate"))
+        audience=payload.get("audience", "intermediate"),
+        parent_id=payload.get("parent_id"))
     from .database import SessionLocal
     from .models import Explanation
     db = SessionLocal()
@@ -205,6 +206,27 @@ def _run_explain(payload: dict) -> dict:
 def _run_gaps(payload: dict) -> dict:
     from .research_gaps import persist_gaps
     return persist_gaps(payload["investigation_id"])
+
+
+@handler("ask")
+def _run_ask(payload: dict) -> dict:
+    from .ask import ask
+    exp_id = ask(
+        payload["question"], scope=payload.get("scope"),
+        mode=payload.get("mode", "explain"),
+        depth=payload.get("depth", "balanced"),
+        audience=payload.get("audience", "intermediate"),
+        parent_id=payload.get("parent_id"),
+        include_web=payload.get("include_web", True))
+    from .database import SessionLocal
+    from .models import Explanation
+    db = SessionLocal()
+    try:
+        status = (db.query(Explanation.status)
+                  .filter(Explanation.id == exp_id).scalar())
+    finally:
+        db.close()
+    return {"explanation_id": exp_id, "status": status}
 
 
 @handler("assess")
@@ -239,6 +261,11 @@ def _run_assess(payload: dict) -> dict:
             taxonomy_fingerprint=out["taxonomy_fingerprint"])
         db.add(rec)
         db.commit()
+        try:
+            from . import search_index as _si
+            _si.index_assessment(db, rec)
+        except Exception:
+            pass
         return {"assessment_id": rec.id, "overall_pct": out["overall_pct"]}
     finally:
         db.close()

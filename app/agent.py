@@ -346,6 +346,16 @@ def _persist(db: Session, inv_id: int, kept: list,
                      "domain": a.domain, "entities": a.entities_json or [],
                      "relates_to": v.get("relates_to") or []})
     db.commit()
+    # Index for full-text search. Best-effort by contract: a failed index
+    # write degrades to "searchable after reindex", never to lost evidence.
+    try:
+        from . import search_index as _si
+        for r in db.query(Artifact).filter(
+                Artifact.investigation_id == inv_id,
+                Artifact.id.in_([x["id"] for x in rows])).all():
+            _si.index_artifact(db, r)
+    except Exception:
+        pass
     return rows
 
 

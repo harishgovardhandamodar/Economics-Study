@@ -341,21 +341,37 @@ def _roadmap(investigation_id: int, question: str, sources: list[dict],
 def launch_explanation(investigation_id: int, question: str, *,
                        mode: str = "explain", depth: str = "balanced",
                        audience: str = "intermediate",
-                       max_sources: int = MAX_SOURCES) -> int:
+                       max_sources: int = MAX_SOURCES,
+                       parent_id: int | None = None) -> int:
     """Run the whole pipeline and return the new explanation's id.
 
     Returns an id rather than the ORM row on purpose: the session is closed on
     the way out, so a detached row would raise the moment a caller (or a queued
     worker that outlives the request) touched an attribute. Callers that want
     the content read it back through ``GET /api/explanations/{id}``.
+
+    ``parent_id`` threads the answer into a conversation: the thread is the
+    parent's thread (or the parent itself for a first follow-up). Without it a
+    queued follow-up lands as a root and the thread silently goes flat — which
+    is how "continue as thread" breaks without anyone noticing.
     """
     db = SessionLocal()
     try:
         inv = (db.query(Investigation)
                .filter(Investigation.id == investigation_id).first())
+        thread_id = None
+        if parent_id is not None:
+            parent = (db.query(Explanation)
+                      .filter(Explanation.id == parent_id).first())
+            if parent is None:
+                raise ValueError("no such parent explanation")
+            if parent.investigation_id != investigation_id:
+                raise ValueError("parent belongs to another investigation")
+            thread_id = parent.thread_id or parent.id
         exp = Explanation(investigation_id=investigation_id, question=question,
                           mode=mode, depth=depth, audience=audience,
-                          status="running")
+                          status="running", parent_id=parent_id,
+                          thread_id=thread_id)
         db.add(exp)
         db.commit()
         exp_id = exp.id
@@ -458,6 +474,12 @@ def launch_explanation(investigation_id: int, question: str, *,
             db.commit()
             if inv is not None and inv.auto_save_explanations:
                 _save_to_graph(db, inv.id, exp)
+            try:
+                from . import search_index as _si
+                db.refresh(exp)
+                _si.index_explanation(db, exp)
+            except Exception:
+                pass
             return exp.id
     finally:
         db.close()
@@ -506,6 +528,11 @@ def _save_to_graph(db: Session, investigation_id: int, exp: Explanation) -> int:
     )
     db.add(artifact)
     db.commit()
+    try:
+        from . import search_index as _si
+        _si.index_artifact(db, artifact)
+    except Exception:
+        pass
     if exp.trace:
         try:
             trace = json.loads(exp.trace)
@@ -530,23 +557,11 @@ def followup(explanation_id: int, question: str, **kw) -> int:
         kw.setdefault("mode", parent.mode)
         kw.setdefault("depth", parent.depth)
         kw.setdefault("audience", parent.audience)
-        inv_id, tid, parent_id = parent.investigation_id, parent.thread_id, parent.id
+        inv_id, parent_id = parent.investigation_id, parent.id
     finally:
         db.close()
-    child_id = launch_explanation(inv_id, question, **kw)
-    db = SessionLocal()
-    try:
-        child = db.query(Explanation).filter(Explanation.id == child_id).first()
-        if child is None:
-            return child_id
-        child.parent_id = parent_id
-        # A thread is a chain of questions about one thing. A follow-up with no
-        # thread id would be an orphan, which is the one thing a thread is not.
-        child.thread_id = tid or parent_id
-        db.commit()
-        return child_id
-    finally:
-        db.close()
+    child_id = launch_explanation(inv_id, question, parent_id=parent_id, **kw)
+    return child_id
 
 
 def quiz_for(explanation_id: int, n: int = 3) -> list[dict]:

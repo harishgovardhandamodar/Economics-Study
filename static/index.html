@@ -197,6 +197,12 @@ label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-wei
   background:var(--bg);cursor:pointer}
 .doc-item:hover{border-color:var(--accent)}
 .doc-item.active{border-color:var(--accent);background:var(--bg3)}
+mark{background:rgba(88,166,255,.3);color:inherit;border-radius:3px;
+  padding:0 2px}
+.ask-node{border-left:2px solid var(--border);padding:0 0 4px 14px;
+  margin-bottom:12px}
+.ask-node.root{border-left-color:var(--accent)}
+.ask-q{font-weight:600;font-size:13.5px;line-height:1.5;margin-bottom:8px}
 .legend{position:absolute;left:14px;bottom:14px;background:var(--bg2);
   border:1px solid var(--border);border-radius:9px;padding:12px;max-width:250px;
   font-size:11px;z-index:10;box-shadow:0 6px 22px rgba(0,0,0,.4)}
@@ -349,6 +355,8 @@ table.tbl tr:hover td{background:var(--bg2)}
         <i class="fas fa-briefcase"></i> Executive brief</button>
       <button class="app-btn" data-app="design" onclick="switchApp('design')">
         <i class="fas fa-drafting-compass"></i> Design</button>
+      <button class="app-btn" data-app="ask" onclick="switchApp('ask')">
+        <i class="fas fa-comments"></i> Ask</button>
     </div>
     <div class="header-right">
       <span id="llmPill" class="pill">gateway…</span>
@@ -669,6 +677,7 @@ async function refreshView() {
   const el = $('#view');
   if (State.app === 'brief') return viewBrief(el);
   if (State.app === 'design') return viewDesign(el);
+  if (State.app === 'ask') return viewAsk(el);
   // Mapper views need an investigation selected first.
   if (!State.invId) {
     el.className = 'view';
@@ -1198,11 +1207,17 @@ async function showSources(id) {
       do not read as five sources agreeing.</span></div>
     <div class="sources">${(e.sources || []).map(s => {
       const dropped = droppedIds.includes(s.index);
+      const isWeb = s.origin === 'web';
       return `<div class="source-item ${dropped ? 'dropped' : ''}">
         <div><strong>[${s.index}]</strong> ${esc(s.title)}</div>
         <div style="color:var(--text3);font-size:11px;margin-top:4px">
           ${esc(s.source || '')} ${s.domain ? '· ' + esc(domLabel(s.domain)) : ''}
+          ${isWeb ? '· <span class="tag" style="color:var(--orange)">live web — unvetted</span>' : ''}
           ${dropped ? '· <span style="color:var(--red)">unverified — no quote from this source was found in the answer</span>' : ''}
+        </div>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+          ${s.artifact_id ? `<button class="btn sm" onclick="closeModal();showArtifact(${s.artifact_id})">Open in graph</button>` : ''}
+          ${s.url ? `<a class="btn sm" href="${esc(s.url)}" target="_blank" rel="noopener"><i class="fas fa-arrow-up-right-from-square"></i> source link</a>` : ''}
         </div></div>`;
     }).join('')}</div>`, `<button class="btn primary" onclick="closeModal()">Close</button>`);
 }
@@ -1527,6 +1542,301 @@ async function renderDoc(id) {
       });
     }
   } catch (e) { v.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; }
+}
+
+async function openSearchDoc(type, id, invId) {
+  if (type === 'artifact') return showArtifact(id);
+  if (type === 'explanation') {
+    try {
+      const e = await api('/api/explanations/' + id);
+      State.askOpen = e.thread_id || e.id;
+      await openAskThread(State.askOpen);
+      $('#askThread').scrollIntoView({ behavior: 'smooth' });
+    } catch (e2) { toast(e2.message, 'err'); }
+    return;
+  }
+  if (type === 'assessment') return showAssessment(id);
+  if (type === 'investigation' && invId) {
+    State.invId = invId;
+    renderSidebar();
+    switchApp('mapper');
+    switchView('graph');
+  }
+}
+
+// ---------- ask ----------
+// Ask is estate-wide: any collected evidence plus the live web, answered as
+// threaded explanations. Threads nest (replies to replies), two replies to
+// one message is a branch, and any answer promotes into an investigation.
+async function viewAsk(el) {
+  el.className = 'view';
+  const scopeOpts = `<option value="all">All collections</option>` +
+    State.investigations.filter(i => !i.hidden).map(i =>
+      `<option value="inv:${i.id}">${esc(i.title.slice(0, 60))}</option>`).join('');
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-comments"></i> Ask anything
+        <span class="sub">collected evidence first, live web second, every quote verified</span></h3>
+      <div class="field"><label>Elastic search — everything collected, answered and assessed</label>
+        <div class="row">
+          <input type="text" id="esQ" placeholder="stablecoin reserves…" style="flex:3"
+            onkeydown="if(event.key==='Enter')runElasticSearch()">
+          <select id="esType" style="flex:1">
+            <option value="">All types</option><option value="artifact">Artifacts</option>
+            <option value="explanation">Answers</option><option value="assessment">Assessments</option>
+            <option value="investigation">Briefs</option>
+          </select>
+          <button class="btn" onclick="runElasticSearch()"><i class="fas fa-search"></i></button>
+        </div></div>
+      <div id="esResults"></div>
+    </div>
+    <div class="card">
+      <h3><i class="fas fa-paper-plane"></i> New question</h3>
+      <textarea id="askText" rows="3" placeholder="How does a rate decision transmit into stablecoin reserve composition?"></textarea>
+      <div class="row" style="margin-top:10px">
+        <div class="field" style="margin:0"><label>Scope</label>
+          <select id="askScope">${scopeOpts}</select></div>
+        <div class="field" style="margin:0"><label>Mode</label>
+          <select id="askMode">${EXPLAIN_MODES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+        <div class="field" style="margin:0"><label>Depth</label>
+          <select id="askDepth"><option value="shallow">Shallow</option>
+            <option value="balanced" selected>Balanced</option><option value="deep">Deep</option></select></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:14px;align-items:center">
+        <button class="btn primary" id="askBtn" onclick="askSubmit()"><i class="fas fa-paper-plane"></i> Ask</button>
+        <label style="display:flex;gap:7px;align-items:center;margin:0;cursor:pointer;font-size:12.5px">
+          <input type="checkbox" id="askWeb" checked style="width:auto"> supplement with live web</label>
+      </div>
+      <div id="askStatus"></div>
+    </div>
+    <div class="card">
+      <h3><i class="fas fa-list"></i> Threads
+        <span class="sub">follow-ups nest; two replies to one message is a branch</span></h3>
+      <div id="askThreads"><div class="empty">Loading…</div></div>
+    </div>
+    <div id="askThread"></div>`;
+  await loadAskThreads();
+  if (State.askOpen) await openAskThread(State.askOpen);
+}
+
+async function askSubmit() {
+  const question = $('#askText').value.trim();
+  if (!question) return toast('Ask something first.', 'err');
+  const btn = $('#askBtn');
+  btn.disabled = true;
+  $('#askStatus').innerHTML = `<div class="banner info" style="margin-top:12px">
+    <i class="fas fa-spinner spin"></i><span>Retrieving collected evidence and live web.
+    Quotes will be verified before the answer appears.</span></div>`;
+  try {
+    await api('/api/ask', { method: 'POST', body: JSON.stringify({
+      question, scope: $('#askScope').value, mode: $('#askMode').value,
+      depth: $('#askDepth').value, audience: 'intermediate',
+      include_web: $('#askWeb').checked }) });
+    State.askPendingQ = question;
+    $('#askText').value = '';
+    $('#askStatus').innerHTML = '';
+    btn.disabled = false;
+    startPolling();
+  } catch (e) {
+    $('#askStatus').innerHTML = '';
+    btn.disabled = false;
+    toast(e.message, 'err');
+  }
+}
+
+async function loadAskThreads() {
+  const box = $('#askThreads');
+  if (!box) return;
+  try {
+    const data = await api('/api/ask/threads?limit=30');
+    State.askThreadList = data.threads;
+    box.innerHTML = data.threads.map(t => `
+      <div class="source-item" style="margin-bottom:7px;cursor:pointer"
+        onclick="openAskThread(${t.id})">
+        <div><strong>${esc(t.question.slice(0, 110))}</strong></div>
+        <div style="color:var(--text3);font-size:11px;margin-top:4px">
+          ${t.replies ? t.replies + (t.replies === 1 ? ' reply' : ' replies') + ' · ' : ''}
+          ${esc(t.status)}${t.confidence != null ? ' · conf ' + t.confidence.toFixed(2) : ''}
+          · ${fmtDate(t.created_at)}</div>
+      </div>`).join('') || '<div class="empty">No threads yet. Answers land here as they finish.</div>';
+    // A just-asked question opens itself once the queue drains it.
+    if (State.askPendingQ) {
+      const hit = data.threads.find(t => t.question === State.askPendingQ && t.status === 'done');
+      if (hit) { State.askPendingQ = null; State.askOpen = hit.id; await openAskThread(hit.id); }
+    }
+  } catch (e) { box.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; }
+}
+
+async function openAskThread(id) {
+  State.askOpen = id;
+  const box = $('#askThread');
+  if (!box) return;
+  try {
+    const data = await api('/api/explanations/' + id + '/tree');
+    box.innerHTML = `<div class="card" style="background:var(--bg)">
+      <h3><i class="fas fa-comments"></i> Thread</h3>
+      ${renderAskNode(data.tree, 0)}
+    </div>`;
+    const root = $('#askThread');
+    if (root) { root.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    hydrateMermaid(box);
+  } catch (e) { box.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; }
+}
+
+function renderAskNode(n, depth) {
+  const conf = n.confidence ?? 0;
+  const confColor = conf >= 0.6 ? 'var(--green)' : conf >= 0.35 ? 'var(--orange)' : 'var(--red)';
+  const kids = (n.children || []).map(c => renderAskNode(c, depth + 1)).join('');
+  return `<div class="ask-node ${depth === 0 ? 'root' : ''}">
+    <div class="ask-q">${esc(n.question)}</div>
+    ${n.status === 'done' && n.answer ? `<div class="answer">${renderAnswer(n.answer)}</div>` : ''}
+    ${n.status === 'no_evidence' ? `<div class="banner warn" style="margin:8px 0">
+      <i class="fas fa-triangle-exclamation"></i><span>No evidence — filed as a research gap.</span></div>` : ''}
+    ${n.status === 'running' ? '<div class="empty">Answering…</div>' : ''}
+    <div class="meta-strip" style="margin:10px 0">
+      ${n.domains?.length ? n.domains.map(d => `<span class="tag dom"
+        style="background:${domColor(d)}">${esc(domLabel(d))}</span>`).join('') : ''}
+      ${n.confidence != null ? `<span style="display:flex;align-items:center;gap:6px">
+        <span class="conf-bar"><i style="width:${Math.round(conf * 100)}%;background:${confColor}"></i></span>
+        ${conf.toFixed(2)}</span>` : ''}
+      ${n.dropped_citations ? `<span class="tag" style="color:var(--red)">${n.dropped_citations} dropped</span>` : ''}
+    </div>
+    <div class="art-actions">
+      <button class="btn sm" onclick="showSources(${n.id})"><i class="fas fa-book-open"></i> Evidence</button>
+      <button class="btn sm" onclick="askDiagram(${n.id})"><i class="fas fa-diagram-project"></i> Channel map</button>
+      <button class="btn sm" onclick="toggleAskComposer(${n.id})"><i class="fas fa-reply"></i> Follow up</button>
+      <button class="btn sm" onclick="promoteThread(${n.id})"><i class="fas fa-plus"></i> Promote to investigation</button>
+      <button class="btn sm" onclick="makeQuiz(${n.id})"><i class="fas fa-graduation-cap"></i> Quiz</button>
+    </div>
+    <div id="askcomp-${n.id}" style="display:none;margin-top:10px">
+      <textarea id="asktext-${n.id}" rows="2" placeholder="Follow-up — answers here branch from this message…"></textarea>
+      <div style="margin-top:8px"><button class="btn sm primary" onclick="submitAskFollowup(${n.id})">Ask follow-up</button></div>
+    </div>
+    <div id="expextra-${n.id}"></div>
+    ${kids}
+  </div>`;
+}
+
+function toggleAskComposer(id) {
+  const c = $('#askcomp-' + id);
+  if (c) { c.style.display = c.style.display === 'none' ? '' : 'none'; }
+}
+
+async function submitAskFollowup(id) {
+  const q = $('#asktext-' + id).value.trim();
+  if (!q) return toast('Ask something first.', 'err');
+  try {
+    await api(`/api/explanations/${id}/followup`, {
+      method: 'POST', body: JSON.stringify({ question: q }) });
+    State.askPendingQ = null;
+    toast('Follow-up queued — it will branch from this message.', 'ok');
+    startPolling();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function askDiagram(id) {
+  try {
+    const e = await api('/api/explanations/' + id);
+    const dia = e.trace?.diagram;
+    const box = $('#expextra-' + id);
+    if (!dia) { box.innerHTML = '<div class="banner warn" style="margin-top:12px">No channel map — the answer never crossed a domain.</div>'; return; }
+    box.innerHTML = `<div class="card" style="margin:14px 0 0;background:var(--bg2)">
+      <h3><i class="fas fa-diagram-project"></i> Channel map
+        <span class="sub">derived from the taxonomy, never drafted</span></h3>
+      <div class="gap-query">${esc(dia)}</div><div class="dia-out"></div></div>`;
+    hydrateMermaidText(box, dia);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function hydrateMermaid(root) {
+  // Render every .mermaid block under root; failures keep source visible.
+  if (!window.mermaid) return;
+  try {
+    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+    mermaid.run({ nodes: root.querySelectorAll('.mermaid') });
+  } catch (e) {}
+}
+
+function hydrateMermaidText(box, code) {
+  const out = box.querySelector('.dia-out');
+  if (!out) return;
+  if (!window.mermaid) {
+    out.innerHTML = '<div class="banner warn" style="margin-top:8px">Diagrams need the mermaid CDN (offline?).</div>';
+    return;
+  }
+  const div = document.createElement('div');
+  div.className = 'mermaid';
+  div.textContent = code;
+  out.appendChild(div);
+  try {
+    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+    mermaid.run({ nodes: [div] }).catch(() => {
+      div.outerHTML = '<pre>' + esc(code) + '</pre>';
+    });
+  } catch (e) {
+    div.outerHTML = '<pre>' + esc(code) + '</pre>';
+  }
+}
+
+async function promoteThread(id) {
+  if (!confirm('Promote this answer into a new investigation and start collecting?')) return;
+  try {
+    const r = await api('/api/ask/promote', {
+      method: 'POST', body: JSON.stringify({ explanation_id: id }) });
+    toast(`Promoted to investigation #${r.investigation_id}. Collecting.`, 'ok');
+    await loadInvestigations();
+    State.askOpen = null;
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function runElasticSearch() {
+  const q = $('#esQ').value.trim();
+  const box = $('#esResults');
+  if (!q) return;
+  box.innerHTML = '<div class="empty">Searching everything…</div>';
+  try {
+    const type = $('#esType').value;
+    const r = await api('/api/search/all?q=' + encodeURIComponent(q) +
+      (type ? '&doc_type=' + type : ''));
+    if (!r.results.length) {
+      box.innerHTML = '<div class="empty">Nothing matches. The index rebuilds after every run — ' +
+        '<a href="#" onclick="reindexSearch();return false">reindex now</a>.</div>';
+      return;
+    }
+    box.innerHTML = r.results.map(h => `
+      <div class="source-item" style="margin-bottom:7px;cursor:pointer"
+        onclick="openSearchDoc('${h.doc_type}', ${h.doc_id}, ${h.investigation_id ?? 'null'})">
+        <div><span class="tag">${esc(h.doc_type)}</span> <strong>${esc(h.title.slice(0, 100))}</strong></div>
+        <div style="color:var(--text2);font-size:12px;margin-top:5px">${h.snippet}</div>
+      </div>`).join('') +
+      (r.fallback ? '<div style="font-size:11px;color:var(--text3)">No exact phrase — showing AND matches.</div>' : '');
+  } catch (e) { box.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; }
+}
+
+async function reindexSearch() {
+  const r = await api('/api/search/reindex', { method: 'POST' });
+  toast(`Indexed ${r.total} document(s).`, 'ok');
+  await runElasticSearch();
+}
+
+async function openSearchDoc(type, id, invId) {
+  if (type === 'artifact') return showArtifact(id);
+  if (type === 'explanation') {
+    try {
+      const e = await api('/api/explanations/' + id);
+      State.askOpen = e.thread_id || e.id;
+      await openAskThread(State.askOpen);
+      $('#askThread').scrollIntoView({ behavior: 'smooth' });
+    } catch (e2) { toast(e2.message, 'err'); }
+    return;
+  }
+  if (type === 'assessment') return showAssessment(id);
+  if (type === 'investigation' && invId) {
+    State.invId = invId;
+    renderSidebar();
+    switchApp('mapper');
+    switchView('graph');
+  }
 }
 
 // ---------- summary ----------

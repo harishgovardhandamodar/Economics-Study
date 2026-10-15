@@ -262,6 +262,11 @@ def create_investigation(body: InvestigationIn, db: Session = Depends(get_db)):
         # reporting: the run would silently collect nothing for it.
         out["warnings"] = [f"unknown domain(s) ignored: {', '.join(unknown)}"]
     scheduler._sync_job(inv.id)
+    try:
+        from . import search_index as _si
+        _si.index_investigation(db, inv)
+    except Exception:
+        pass
     return out
 
 
@@ -499,6 +504,11 @@ def add_artifact(inv_id: int, body: ArtifactIn, db: Session = Depends(get_db)):
         relevance=1.0, review="accepted", origin="manual")
     db.add(a)
     db.commit()
+    try:
+        from . import search_index as _si
+        _si.index_artifact(db, a)
+    except Exception:
+        pass
     return _artifact_dict(a)
 
 
@@ -541,6 +551,11 @@ def delete_artifact(artifact_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "no such artifact")
     db.delete(a)
     db.commit()
+    try:
+        from . import search_index as _si
+        _si.delete_doc(db, "artifact", artifact_id)
+    except Exception:
+        pass
     return {"ok": True, "deleted": artifact_id}
 
 
@@ -906,6 +921,11 @@ def delete_explanation(exp_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "no such explanation")
     db.delete(e)
     db.commit()
+    try:
+        from . import search_index as _si
+        _si.delete_doc(db, "explanation", exp_id)
+    except Exception:
+        pass
     return {"ok": True, "deleted": exp_id}
 
 
@@ -921,7 +941,8 @@ def followup(exp_id: int, body: FollowupIn, db: Session = Depends(get_db)):
     job = jobqueue.enqueue("explain", {"investigation_id": e.investigation_id,
                                        "question": body.question,
                                        "mode": e.mode, "depth": e.depth,
-                                       "audience": e.audience},
+                                       "audience": e.audience,
+                                       "parent_id": e.id},
                             investigation_id=e.investigation_id)
     return {**job, "queued": True}
 
@@ -1961,3 +1982,122 @@ def leadership_board_pdf(investigation_id: int | None = None,
     from . import dossier_pdf as _pdf
     filename, pdf = _pdf.build_board_pdf(db, investigation_id)
     return _pdf_response(filename, pdf)
+
+
+# ==========================================================================
+# Ask: estate-wide questions over collected evidence + the live web
+# ==========================================================================
+class AskIn(BaseModel):
+    question: str
+    scope: str = "all"  # "all" or "inv:<id>"
+    mode: str = "explain"
+    depth: str = "balanced"
+    audience: str = "intermediate"
+    parent_id: int | None = None
+    include_web: bool = True
+
+
+@app.post("/api/ask")
+def ask_question(body: AskIn, db: Session = Depends(get_db)):
+    """Ask anything of everything collected, plus the live web.
+
+    Scope ``all`` searches every investigation's artifacts; ``inv:<id>``
+    scopes to one. Long work goes through the queue like everything else.
+    """
+    if not (body.question or "").strip():
+        raise HTTPException(400, "question is required")
+    if body.mode not in expl.MODES:
+        raise HTTPException(400, f"mode must be one of {sorted(expl.MODES)}")
+    if body.scope != "all":
+        if not body.scope.startswith("inv:"):
+            raise HTTPException(400, "scope must be 'all' or 'inv:<id>'")
+        _get_inv(db, int(body.scope[4:]) if body.scope[4:].isdigit() else -1)
+    if body.parent_id is not None and db.query(Explanation).filter(
+            Explanation.id == body.parent_id).first() is None:
+        raise HTTPException(404, "no such parent explanation")
+    job = jobqueue.enqueue("ask", {
+        "question": body.question, "scope": body.scope, "mode": body.mode,
+        "depth": body.depth, "audience": body.audience,
+        "parent_id": body.parent_id, "include_web": body.include_web})
+    return {**job, "queued": True}
+
+
+@app.get("/api/ask/threads")
+def ask_threads(investigation_id: int | None = None, limit: int = 30,
+                db: Session = Depends(get_db)):
+    """Thread roots, newest first. Roots live in the Ask archive until one is
+    promoted — pass an investigation id to see only its threads."""
+    from . import ask as _ask
+    return _ask.list_threads(db, investigation_id, limit=limit)
+
+
+@app.get("/api/explanations/{exp_id}/tree")
+def explanation_tree(exp_id: int, db: Session = Depends(get_db)):
+    """One thread as a nested tree, so branches render as branches."""
+    from . import ask as _ask
+    # Climb to the root: a tree is addressed by any member.
+    e = db.query(Explanation).filter(Explanation.id == exp_id).first()
+    if e is None:
+        raise HTTPException(404, "no such explanation")
+    root_id = exp_id
+    seen = {exp_id}
+    while e.parent_id is not None and e.parent_id not in seen:
+        seen.add(e.parent_id)
+        e = db.query(Explanation).filter(Explanation.id == e.parent_id).first()
+        if e is None:
+            break
+        root_id = e.id
+    tree = _ask.thread_tree(db, root_id)
+    if tree is None:
+        raise HTTPException(404, "no such explanation")
+    return {"thread_id": root_id, "tree": tree}
+
+
+class PromoteIn(BaseModel):
+    explanation_id: int
+    collect: bool = True
+
+
+@app.post("/api/ask/promote")
+def ask_promote(body: PromoteIn, db: Session = Depends(get_db)):
+    """Promote a thread answer into a real investigation: the question becomes
+    the brief, the answer lands as its first artifact, collection starts."""
+    from . import ask as _ask
+    try:
+        return _ask.promote(db, body.explanation_id, collect=body.collect)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+
+
+# ==========================================================================
+# Elastic search: one ranked index over artifacts, answers, assessments
+# ==========================================================================
+@app.get("/api/search/all")
+def search_all(q: str, doc_type: str | None = None,
+               investigation_id: int | None = None, limit: int = 20,
+               db: Session = Depends(get_db)):
+    """Full-text search across everything: evidence, answers, assessments,
+    briefs. Hits carry <mark> snippets showing why they matched."""
+    from . import search_index as _si
+    if not (q or "").strip():
+        raise HTTPException(400, "q is required")
+    out = _si.search(db, q, doc_type=doc_type,
+                     investigation_id=investigation_id, limit=limit)
+    if not out.get("ok"):
+        raise HTTPException(400, out.get("reason", "search failed"))
+    return out
+
+
+@app.post("/api/search/reindex")
+def search_reindex(db: Session = Depends(get_db)):
+    """Rebuild the full-text index from stored rows. The catch-up path: after
+    this, the index *is* the database by construction."""
+    from . import search_index as _si
+    return _si.reindex_all(db)
+
+
+@app.get("/api/search/index-state")
+def search_index_state(db: Session = Depends(get_db)):
+    from . import search_index as _si
+    return {"indexed": _si.indexed_counts(db),
+            "fts": _si.ensure_table(db)}

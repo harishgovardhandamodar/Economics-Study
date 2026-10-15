@@ -352,8 +352,8 @@ Design decisions worth knowing:
 
 ## GUI tour
 
-Three top-level apps share the header switcher. **Mapper** is the
-per-investigation workbench below; **Executive brief** and **Design** are
+Four top-level apps share the header switcher. **Mapper** is the
+per-investigation workbench below; **Executive brief**, **Design** and **Ask** are
 estate-wide and work with zero investigations selected.
 
 **Investigations** (sidebar) — title, keywords, brief, an optional **driver**
@@ -528,6 +528,7 @@ mapper too would only prove the mocks agree with each other.
 | `test_remaining.py` | SIEM cursor export + minimised payloads; framework matrix scoring; A2A invoke incl. rejections; real PDFs + hostile-markup renderer test |
 | `test_brief_design.py` | Design index/fetch + traversal rejection + missing-dir honesty; global graph namespacing/hubs/scoping; category + cross-session similarity clusters |
 | `test_frontend.py` | Static GUI checks: every `$('#X')` resolves; no backticks inside onclick attributes |
+| `test_ask.py` | Estate + scoped ask with web supplement; queued follow-ups stay threaded; branching forks; promote copies; FTS ranking/highlight/fallback |
 
 ---
 
@@ -560,7 +561,9 @@ app/
   agents.py          A2A cards + deterministic dispatch
   dossier_pdf.py     reportlab A4 reports (dossier, assessment, board)
   design_docs.py     the design set as selectable documents (index, never listing)
-  main.py            the API (109 paths)
+  ask.py             estate-wide Q&A over collected evidence + live web
+  search_index.py    FTS5 full-text index over everything (BM25, snippets)
+  main.py            the API (116 paths)
 static/index.html    the GUI
 scripts/seed.py      five cross-domain investigations
 ```
