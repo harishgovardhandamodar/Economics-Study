@@ -95,7 +95,7 @@ flowchart LR
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `domains.py` | The taxonomy: 11 domains, 30+ channels, 13 drivers, relationship types, entity aliases | nothing |
+| `domains.py` | The taxonomy: 14 domains, 58 channels, 16 drivers, relationship types, entity aliases | nothing |
 | `models.py` | Investigation, Artifact, Relationship, AgentRun, Explanation, ResearchGap, Job | `database` |
 | `ledger.py` / `ledger_models.py` | Hash chain, mandates, proofs, claims, sessions, exports | `database` |
 | `ledger_api.py` | The audit surface as its own router | `ledger` |

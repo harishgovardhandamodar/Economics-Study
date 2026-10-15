@@ -94,6 +94,18 @@ FRAMEWORKS: dict[str, dict] = {
         "domains": ["ai_labs", "agi_asi", "ai_agents"],
         "blurb": "Voluntary capability thresholds, evals and deployment pledges.",
     },
+    "wto-rules": {
+        "label": "WTO rules and disputes",
+        "body": "WTO",
+        "domains": ["trade", "politics", "macro"],
+        "blurb": "Most-favoured-nation, dispute settlement, subsidy rules.",
+    },
+    "sanctions-regimes": {
+        "label": "Sanctions regimes (OFAC / EU / UN)",
+        "body": "OFAC / EU / UN",
+        "domains": ["geopolitics", "blockchain", "stablecoins", "sovereign_debt"],
+        "blurb": "Designations that freeze addresses, reserves and issuance.",
+    },
 }
 
 

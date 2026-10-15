@@ -98,6 +98,6 @@ def test_full_assessment_lifecycle(client):
 
 def test_council_panel_lists_blind_spots(client):
     p = client.get("/api/council/panel").json()
-    assert len(p["seats"]) == 6
+    assert len(p["seats"]) == 7
     assert all(s["blind_spot"] for s in p["seats"])
     assert any(s["id"] == "measurement" for s in p["seats"])

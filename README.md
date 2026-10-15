@@ -33,7 +33,7 @@ visible, and to be honest about the ones nobody has looked at yet.
 
 ## The taxonomy
 
-Eleven domains, chosen because they are the places cross-domain economics
+Fourteen domains, chosen because they are the places cross-domain economics
 actually breaks. `app/domains.py` is the whole model: a domain is a **label**,
 a channel is a **mechanism with a lag**, a driver is the **event** an
 investigation tracks.
@@ -50,7 +50,10 @@ investigation tracks.
 | `ai_labs` | amber | OpenAI, Anthropic, DeepMind, Meta, xAI, Mistral, DeepSeek, Qwen |
 | `ai_agents` | light purple | Agentic systems, tool use, agent labour, machine payments |
 | `agi_asi` | salmon | Capability timelines, compute ceilings, labour displacement |
-| `politics` | grey | Elections, geopolitics, sanctions, export controls, state AI policy |
+| `politics` | grey | Elections, coalitions, central-bank politics, state AI policy |
+| `trade` | gold | Tariffs, quotas, trade deals, rules of origin, customs, WTO disputes |
+| `geopolitics` | pink | Conflicts, alliances, summits, coups, sanctions regimes, blockades |
+| `disruptions` | pale green | Chokepoints, cable cuts, pandemics, disasters that break supply chains |
 
 **Domains are deliberately not peers.** `macro`, `monetary_policy` and
 `politics` are declared **hubs** in `domains.HUB_DOMAINS`, and the test suite
@@ -251,7 +254,7 @@ expires is how a guardrail quietly becomes permanent.
 
 ## The council
 
-Six seats (`GET /api/council/panel`), each owning domains and declaring the
+Seven seats (`GET /api/council/panel`), each owning domains and declaring the
 weakness it is known to have — monetary, fiscal-state, crypto-money,
 compute-capacity, labour-agents, and measurement science, which owns nothing
 and exists only to attack the other five. A panel that publishes its blind

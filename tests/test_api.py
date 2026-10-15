@@ -158,7 +158,7 @@ def test_taxonomy_is_served(client):
     r = client.get("/api/domains")
     assert r.status_code == 200
     body = r.json()
-    assert len(body["domains"]) == 11
+    assert len(body["domains"]) == 14
     assert body["channels"]
     assert body["drivers"]
 
@@ -424,7 +424,7 @@ def test_research_gaps_endpoint(client):
     # with empty ones visibly empty rather than absent.
     uncovered = [d for d, n in g["coverage"].items() if n == 0]
     assert "macro" in uncovered
-    assert g["domains_total"] == 11
+    assert g["domains_total"] == 14
     assert g["domains_covered"] == 2
 
 

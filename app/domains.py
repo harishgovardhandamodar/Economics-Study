@@ -8,8 +8,11 @@ a channel that exists in ``CHANNELS``.
 
 Three ideas, kept deliberately separate:
 
-* **Domains** — where an artifact sits. Ten of them, listed in ``DOMAINS``.
-  A domain is a label, never a score.
+* **Domains** — where an artifact sits. Fourteen of them, listed in ``DOMAINS``.
+  A domain is a label, never a score. Trade policy, geopolitical events and
+  intercontinental disruptions are first-class domains rather than corners of
+  ``politics``: burying a tariff inside politics is exactly how a map ends up
+  unable to say where the price shock came from.
 * **Channels** — how one domain transmits to another. ``CHANNELS`` is a directed
   edge list with a typical lag. This is the vocabulary the transmission engine
   walks, so a chain "datacenter capex -> power demand -> industrial electricity
@@ -105,9 +108,30 @@ DOMAINS: dict[str, dict] = {
     "politics": {
         "label": "Political involvement",
         "short": "Politics",
-        "blurb": "Elections, geopolitics, sanctions, export controls, state AI policy.",
+        "blurb": "Elections, coalitions, central-bank politics, state AI policy.",
         "color": "#a5a5a5",
         "icon": "fa-landmark",
+    },
+    "trade": {
+        "label": "Cross-border trade policy",
+        "short": "Trade",
+        "blurb": "Tariffs, quotas, trade deals, rules of origin, customs, WTO disputes.",
+        "color": "#e3b341",
+        "icon": "fa-ship",
+    },
+    "geopolitics": {
+        "label": "Geopolitical events",
+        "short": "Geopolitics",
+        "blurb": "Conflicts, alliances, summits, coups, sanctions regimes, blockades.",
+        "color": "#f778ba",
+        "icon": "fa-globe",
+    },
+    "disruptions": {
+        "label": "Intercontinental disruptions",
+        "short": "Disruptions",
+        "blurb": "Chokepoints, cable cuts, pandemics, disasters that break supply chains.",
+        "color": "#7ee787",
+        "icon": "fa-cloud-bolt",
     },
 }
 
@@ -281,6 +305,56 @@ CHANNELS: list[dict] = [
     {"src": "politics", "dst": "agi_asi", "channel": "compute governance",
      "strength": 0.6, "lag": 2,
      "note": "Frontier training thresholds are increasingly an international affair."},
+
+    # --- trade, geopolitics, disruptions ---
+    # First-class because the price level increasingly arrives from outside
+    # the border: a tariff is fiscal policy written abroad, a strait closure
+    # is monetary policy written by geography.
+    {"src": "trade", "dst": "macro", "channel": "import prices",
+     "strength": 0.9, "lag": 1,
+     "note": "Tariffs land in import prices first, then the CPI basket."},
+    {"src": "trade", "dst": "politics", "channel": "lobby & retaliation",
+     "strength": 0.7, "lag": 1,
+     "note": "Exposed industries lobby; partners retaliate against the coalition."},
+    {"src": "trade", "dst": "sovereign_debt", "channel": "tariff revenue",
+     "strength": 0.5, "lag": 2,
+     "note": "Tariff receipts move the deficit arithmetic without a budget vote."},
+    {"src": "politics", "dst": "trade", "channel": "trade authority",
+     "strength": 0.8, "lag": 1,
+     "note": "Tariff power is delegated legislation plus executive orders."},
+    {"src": "geopolitics", "dst": "trade", "channel": "weaponised interdependence",
+     "strength": 0.8, "lag": 1,
+     "note": "Chokepoints and licences become instruments, not background."},
+    {"src": "disruptions", "dst": "trade", "channel": "route closure",
+     "strength": 0.85, "lag": 0,
+     "note": "A closed strait reprices every route the day it closes."},
+    {"src": "geopolitics", "dst": "macro", "channel": "risk premia",
+     "strength": 0.85, "lag": 0,
+     "note": "Conflict reprices oil, freight and defence spending same-day."},
+    {"src": "geopolitics", "dst": "sovereign_debt", "channel": "war finance",
+     "strength": 0.75, "lag": 1,
+     "note": "Safe-haven flows and war finance move both ends of the curve."},
+    {"src": "geopolitics", "dst": "datacenters", "channel": "allied shoring",
+     "strength": 0.55, "lag": 2,
+     "note": "Cable routes and allied-shoring decide where compute may land."},
+    {"src": "geopolitics", "dst": "stablecoins", "channel": "capital flight",
+     "strength": 0.55, "lag": 1,
+     "note": "Capital flight into dollar rails when banks close."},
+    {"src": "politics", "dst": "geopolitics", "channel": "alliance posture",
+     "strength": 0.7, "lag": 2,
+     "note": "Elections and coalitions set alliance posture."},
+    {"src": "disruptions", "dst": "geopolitics", "channel": "crisis response",
+     "strength": 0.5, "lag": 1,
+     "note": "A closure forces a naval and diplomatic response."},
+    {"src": "disruptions", "dst": "macro", "channel": "supply shock",
+     "strength": 0.8, "lag": 1,
+     "note": "A supply shock is stagflationary: output down, prices up."},
+    {"src": "disruptions", "dst": "datacenters", "channel": "cable & outage",
+     "strength": 0.5, "lag": 1,
+     "note": "Cable cuts reroute traffic; outages idle whole regions."},
+    {"src": "geopolitics", "dst": "disruptions", "channel": "blockade & sabotage",
+     "strength": 0.6, "lag": 0,
+     "note": "Blockades and sabotage close routes directly."},
 ]
 
 # Derived index, built once at import: ``(src, dst) -> channel``.
@@ -350,7 +424,7 @@ DRIVERS: dict[str, dict] = {
     },
     "export_control": {
         "label": "Export control or compute quota",
-        "domains": ["politics", "ai_labs", "datacenters"],
+        "domains": ["politics", "ai_labs", "datacenters", "trade"],
         "typical_lag": 1,
         "description": "Chip, model-weight or compute restrictions across borders.",
     },
@@ -369,7 +443,8 @@ DRIVERS: dict[str, dict] = {
     },
     "sanction": {
         "label": "Sanctions regime change",
-        "domains": ["politics", "blockchain", "stablecoins", "sovereign_debt"],
+        "domains": ["politics", "geopolitics", "blockchain", "stablecoins",
+                    "sovereign_debt"],
         "typical_lag": 1,
         "description": "New designations, or their removal, with financial reach.",
     },
@@ -378,6 +453,24 @@ DRIVERS: dict[str, dict] = {
         "domains": ["blockchain", "stablecoins", "ai_agents"],
         "typical_lag": 1,
         "description": "A change in settlement cost, throughput or token economics.",
+    },
+    "tariff_shock": {
+        "label": "Tariff hike or trade barrier",
+        "domains": ["trade", "macro", "politics", "sovereign_debt"],
+        "typical_lag": 1,
+        "description": "A new tariff, quota or origin rule that reprices imports.",
+    },
+    "chokepoint_closure": {
+        "label": "Shipping chokepoint or route closure",
+        "domains": ["disruptions", "trade", "macro"],
+        "typical_lag": 0,
+        "description": "A strait, canal or corridor closes; freight reprices same-day.",
+    },
+    "conflict_outbreak": {
+        "label": "Armed conflict / geopolitical rupture",
+        "domains": ["geopolitics", "macro", "sovereign_debt", "trade"],
+        "typical_lag": 0,
+        "description": "Fighting, blockade or rupture that reprices risk premia.",
     },
 }
 
@@ -555,6 +648,17 @@ ENTITY_ALIASES: dict[str, str] = {
     "basel": "basel committee on banking supervision",
     "ocpp": "office of crypto policy",
     "sec": "securities and exchange commission",
+    # Trade and geopolitics are named by acronym as often as in full, and a
+    # strait is usually just its name — without these the entity rule silently
+    # drops the edges that matter most for the new domains.
+    "wto": "world trade organization",
+    "ustr": "united states trade representative",
+    "nato": "north atlantic treaty organization",
+    "brics": "brics",
+    "g7": "group of seven",
+    "g20": "group of twenty",
+    "suez": "suez canal",
+    "hormuz": "strait of hormuz",
     # The energy and grid side. An AI-capex investigation lives or dies on
     # linking these, and they are named by acronym far more often than in full.
     "iea": "international energy agency",

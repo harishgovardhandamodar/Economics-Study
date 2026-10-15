@@ -1,4 +1,4 @@
-"""Economics council: six seats, each owning a slice of the taxonomy.
+"""Economics council: seven seats, each owning a slice of the taxonomy.
 
 Why this exists, in one paragraph: a single drafting call at low temperature
 returns the model's *modal* view of economics — the consensus of the training
@@ -67,6 +67,14 @@ SEATS: tuple[dict[str, Any], ...] = (
         "owns": ("ai_agents", "agi_asi", "macro"),
         "blind_spot": ("Reads capability as deployment. Says nothing about "
                        "reserve regimes or issuance mechanics."),
+    },
+    {
+        "id": "statecraft",
+        "discipline": "Geoeconomics / statecraft",
+        "remit": "What do borders, tariffs and ruptures transmit?",
+        "owns": ("trade", "geopolitics", "disruptions"),
+        "blind_spot": ("Reads everything as statecraft. Says nothing about "
+                       "balance sheets or capability curves."),
     },
     {
         "id": "measurement",

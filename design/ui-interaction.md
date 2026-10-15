@@ -97,7 +97,7 @@ audit actually gets asked.
 
 ```mermaid
 flowchart TB
-    COV["Coverage grid<br/>11 domains, clickable<br/>→ filters the graph"]
+    COV["Coverage grid<br/>14 domains, clickable<br/>→ filters the graph"]
     COV --> GAPS["GAPS<br/>domain with nothing at all<br/>prioritised by connectivity"]
     COV --> THIN["THIN<br/>covered, under 3 artifacts"]
     COV --> UNB["UNBRIDGED CHANNELS<br/>both endpoints covered,<br/>no edge connects them"]
@@ -167,7 +167,7 @@ page that polls forever is a page that never sleeps.
 
 - **No coverage percentage.** "47% covered" is a number with no denominator a
   reader can check. The grid shows absolute counts per domain instead.
-- **No composite risk score.** Combining eleven domains with different evidence
+- **No composite risk score.** Combining fourteen domains with different evidence
   densities into one number hides exactly the thing the app is for.
 - **No confidence on the transmission prior.** The channels carry strengths, but
   the UI never renders them as certainty — they are a prior, and `unbridged

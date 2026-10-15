@@ -91,6 +91,21 @@ INVESTIGATIONS = [
         "driver": "capability_jump",
         "sources": "rss,arxiv,web",
     },
+    {
+        "title": "Tariffs, chokepoints and the price level",
+        "keywords": "tariffs, Suez, freight rates, import prices, sanctions, "
+                    "WTO dispute",
+        "description": (
+            "The price level increasingly arrives from outside the border: a "
+            "tariff reprices imports, a strait closure reprices freight, and a "
+            "sanctions package reroutes both. Trace how trade barriers, "
+            "shipping disruptions and geopolitical ruptures transmit into "
+            "inflation, issuance and the policy reaction."),
+        "preferred_domains": "trade,geopolitics,disruptions,macro,politics",
+        "driver": "tariff_shock",
+        "shock": "A 25-point tariff hike lands in the same quarter as a strait closure.",
+        "sources": "rss,web",
+    },
 ]
 
 

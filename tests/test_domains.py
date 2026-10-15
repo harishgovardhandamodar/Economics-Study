@@ -110,5 +110,33 @@ def test_core_cross_domain_channels_exist():
         ("politics", "ai_labs"),           # export controls
         ("agi_asi", "macro"),              # productivity
         ("ai_agents", "macro"),            # labour substitution
+        ("trade", "macro"),                # tariffs -> import prices
+        ("geopolitics", "macro"),          # conflict -> risk premia
+        ("disruptions", "trade"),          # closed strait -> freight
+        ("geopolitics", "trade"),          # weaponised interdependence
     ]:
         assert required in pairs, f"missing expected channel {required}"
+
+
+def test_new_domains_are_first_class():
+    """Trade, geopolitics and disruptions participate everywhere a domain
+    must: normalisation, catalog, drivers, aliases, and a council seat."""
+    from app import council as C
+    for did in ("trade", "geopolitics", "disruptions"):
+        assert did in D.DOMAINS
+        assert D.normalize_domains(did.upper().replace("_", " ")) == [did]
+    assert D.DRIVERS["tariff_shock"]["domains"][0] == "trade"
+    assert "disruptions" in D.DRIVERS["chokepoint_closure"]["domains"]
+    assert "geopolitics" in D.DRIVERS["conflict_outbreak"]["domains"]
+    assert "geopolitics" in D.DRIVERS["sanction"]["domains"]
+    assert "trade" in D.DRIVERS["export_control"]["domains"]
+    assert D.entity_tokens("WTO ruling") >= {"wto", "world"}
+    assert D.entity_tokens("Suez transit") >= {"suez", "canal"}
+    owners = {d: s["id"] for s in C.SEATS for d in s["owns"]}
+    assert owners["trade"] == "statecraft"
+    assert owners["geopolitics"] == "statecraft"
+    assert owners["disruptions"] == "statecraft"
+    # The statecraft seat publishes its blind spot like every other seat.
+    seat = C.SEAT_BY_ID["statecraft"]
+    assert seat["blind_spot"] and seat["owns"] == (
+        "trade", "geopolitics", "disruptions")

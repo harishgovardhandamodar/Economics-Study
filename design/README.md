@@ -32,7 +32,7 @@ re-derives from stored rows.
 
 ## Three ideas that carry the design
 
-**A domain is a label; a channel is a mechanism.** Ten domains would be ten
+**A domain is a label; a channel is a mechanism.** Fourteen domains would be fourteen
 piles. `app/domains.py` declares directed edges between them with a strength
 prior and a typical lag, and the whole cross-domain layer is built on that
 distinction. The walk is a *prior* — evidence either supports a hop or does
