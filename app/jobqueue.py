@@ -212,12 +212,13 @@ def _run_gaps(payload: dict) -> dict:
 def _run_ask(payload: dict) -> dict:
     from .ask import ask
     exp_id = ask(
-        payload["question"], scope=payload.get("scope"),
+        payload.get("question", ""), scope=payload.get("scope"),
         mode=payload.get("mode", "explain"),
         depth=payload.get("depth", "balanced"),
         audience=payload.get("audience", "intermediate"),
         parent_id=payload.get("parent_id"),
-        include_web=payload.get("include_web", True))
+        include_web=payload.get("include_web", True),
+        resume_id=payload.get("resume_id"))
     from .database import SessionLocal
     from .models import Explanation
     db = SessionLocal()

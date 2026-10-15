@@ -23,6 +23,7 @@ Three decisions shape the module:
 from __future__ import annotations
 
 import json
+import re
 
 from . import domains as D
 from . import grounding as G
@@ -135,8 +136,15 @@ def channel_diagram(domains: list[str]) -> str:
 
 def ask(question: str, *, scope: str | None = None, mode: str = "explain",
         depth: str = "balanced", audience: str = "intermediate",
-        parent_id: int | None = None, include_web: bool = True) -> int:
-    """Run the whole Ask pipeline. Returns the explanation id."""
+        parent_id: int | None = None, include_web: bool = True,
+        resume_id: int | None = None) -> int:
+    """Run the whole Ask pipeline. Returns the explanation id.
+
+    ``resume_id`` answers into an existing row — how an imported question
+    (stored with status ``imported`` and no answer) becomes a real answer
+    without duplicating the thread. The row keeps its parent, thread, tags
+    and group; only the answer payload is produced.
+    """
     from . import explainer as _expl
     db = SessionLocal()
     try:
@@ -150,13 +158,31 @@ def ask(question: str, *, scope: str | None = None, mode: str = "explain",
             if parent is None:
                 raise ValueError("no such parent explanation")
             thread_id = parent.thread_id or parent.id
-        exp = Explanation(investigation_id=home.id, question=question,
-                          mode=mode, depth=depth, audience=audience,
-                          status="running", parent_id=parent_id,
-                          thread_id=thread_id)
-        db.add(exp)
-        db.commit()
-        exp_id = exp.id
+        if resume_id is not None:
+            exp = db.query(Explanation).filter(
+                Explanation.id == resume_id).first()
+            if exp is None:
+                raise ValueError("no such explanation to resume")
+            home = db.query(Investigation).filter(
+                Investigation.id == exp.investigation_id).first()
+            if home is None:
+                raise ValueError("resumed answer has no investigation")
+            if question.strip():
+                exp.question = question.strip()[:2000]
+            question = exp.question
+            exp.status = "running"
+            db.commit()
+            exp_id = exp.id
+        else:
+            if not question.strip():
+                raise ValueError("question is required")
+            exp = Explanation(investigation_id=home.id, question=question,
+                              mode=mode, depth=depth, audience=audience,
+                              status="running", parent_id=parent_id,
+                              thread_id=thread_id)
+            db.add(exp)
+            db.commit()
+            exp_id = exp.id
 
         with L.scope(f"exp-{exp_id}",
                      L.Mandate(objective=f"ask: {question[:80]}",
@@ -177,6 +203,21 @@ def ask(question: str, *, scope: str | None = None, mode: str = "explain",
                  "web": len(web)})
 
             if not sources:
+                no_answer = ("Nothing collected and nothing on the live web "
+                             "speaks to this question, so I will not answer it "
+                             "from memory. It has been filed as a research gap.")
+                if resume_id is not None:
+                    # A resumed row keeps its lineage: update in place rather
+                    # than delete-and-recreate, which would orphan its replies.
+                    exp.answer = no_answer
+                    exp.status = "no_evidence"
+                    exp.sources_json = json.dumps([])
+                    exp.domains_json = json.dumps([])
+                    exp.trace = json.dumps({"ask": True,
+                                            "scope": scope or "all",
+                                            "sources": 0})
+                    db.commit()
+                    return exp.id
                 db.query(Explanation).filter(
                     Explanation.id == exp_id).delete()
                 from .models import ResearchGap
@@ -227,7 +268,11 @@ def ask(question: str, *, scope: str | None = None, mode: str = "explain",
             exp.confidence = confidence
             exp.dropped_citations = ground["dropped_citations"]
             exp.domains_json = json.dumps(domains_touched)
-            exp.trace = json.dumps({
+            try:
+                prior_trace = json.loads(exp.trace or "{}")
+            except Exception:
+                prior_trace = {}
+            trace = {
                 "ask": True, "scope": scope or "all",
                 "scope_label": scope_label,
                 "mode": mode, "depth": depth, "audience": audience,
@@ -239,7 +284,15 @@ def ask(question: str, *, scope: str | None = None, mode: str = "explain",
                 "dropped": ground["dropped"],
                 "artifact_ids": [s["artifact_id"] for s in sources
                                  if s.get("artifact_id")],
-            })
+            }
+            # Import tags and group describe the question, not the run: an
+            # answered import keeps them, or the threads list loses the
+            # grouping the moment anyone presses Answer.
+            for k in ("imported", "import_tags", "import_group",
+                      "imported_at"):
+                if k in prior_trace:
+                    trace[k] = prior_trace[k]
+            exp.trace = json.dumps(trace)
             exp.status = "done"
             db.commit()
             if home.auto_save_explanations:
@@ -340,9 +393,24 @@ def thread_tree(db, explanation_id: int, *, depth: int = 0,
     }
 
 
+def _trace_of(e) -> dict:
+    try:
+        t = json.loads(e.trace or "{}")
+        return t if isinstance(t, dict) else {}
+    except Exception:
+        return {}
+
+
 def list_threads(db, investigation_id: int | None = None,
-                 limit: int = 30) -> dict:
-    """Thread roots, newest first, with shape: children count, depth, status."""
+                 limit: int = 30, group: str | None = None) -> dict:
+    """Thread roots, newest first, with shape: children count, depth, status.
+
+    Each item carries its import ``group`` and ``tags`` (empty for pipeline
+    answers), and the response lists every group with its count so the UI can
+    filter without a second round trip. Groups are scanned over the latest
+    200 roots — bounded, because an unbounded DISTINCT over JSON text is a
+    full table walk dressed as metadata.
+    """
     from sqlalchemy import func
 
     from .models import Explanation as _E
@@ -350,6 +418,12 @@ def list_threads(db, investigation_id: int | None = None,
     if investigation_id is not None:
         q = q.filter(_E.investigation_id == investigation_id)
     roots = q.order_by(_E.id.desc()).limit(limit).all()
+    groups: dict[str, int] = {}
+    for r in db.query(_E).filter(_E.parent_id.is_(None)).order_by(
+            _E.id.desc()).limit(200).all():
+        g = _trace_of(r).get("import_group") or (
+            "imported" if _trace_of(r).get("imported") else "asked")
+        groups[g] = groups.get(g, 0) + 1
     out = []
     for r in roots:
         # Descendants carry thread_id == root id; the root itself has
@@ -358,15 +432,24 @@ def list_threads(db, investigation_id: int | None = None,
         # branches count too — a reply to a reply is still part of the thread.
         n = db.query(func.count(_E.id)).filter(
             _E.thread_id == r.id).scalar() or 0
+        t = _trace_of(r)
+        gname = t.get("import_group") or (
+            "imported" if t.get("imported") else "asked")
+        if group is not None and gname != group:
+            continue
         out.append({
             "id": r.id, "thread_id": r.thread_id or r.id,
             "question": r.question, "status": r.status, "mode": r.mode,
             "confidence": r.confidence,
             "domains": _loads(r.domains_json, []),
+            "group": gname, "tags": t.get("import_tags", []),
+            "imported": bool(t.get("imported")),
             "investigation_id": r.investigation_id,
             "created_at": r.created_at, "replies": n,
         })
-    return {"threads": out, "count": len(out)}
+    return {"threads": out, "count": len(out), "groups": [
+        {"group": g, "count": c} for g, c in
+        sorted(groups.items(), key=lambda kv: -kv[1])]}
 
 
 def _loads(value: str | None, default):
@@ -376,6 +459,245 @@ def _loads(value: str | None, default):
         return json.loads(value)
     except Exception:
         return default
+
+
+def _loads(value: str | None, default):
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+# --------------------------------------------------------------------------
+# History import: Google AI Mode / Takeout search history + conversations
+# --------------------------------------------------------------------------
+# There is no API for AI Mode history — the way in is a Takeout export file.
+# Takeout shapes drift (My Activity Search vs AI Mode vs plain lists), so the
+# parser accepts every shape seen in the wild and reports what it skipped
+# rather than failing the file: a half-parsed history beats a rejected one,
+# and the skip count says which half.
+_TAG_DISPLAY = {
+    "imf": "IMF", "bis": "BIS", "oecd": "OECD", "ecb": "ECB", "fed": "Fed",
+    "boe": "BoE", "boj": "BoJ", "pboc": "PBoC", "wto": "WTO", "ustr": "USTR",
+    "nato": "NATO", "brics": "BRICS", "g7": "G7", "g20": "G20",
+    "suez": "Suez Canal", "hormuz": "Strait of Hormuz", "sec": "SEC",
+    "treasury": "US Treasury", "opec": "OPEC", "iea": "IEA", "eia": "EIA",
+    "ferc": "FERC", "lbnl": "Berkeley Lab",
+}
+
+
+def parse_history_file(content: bytes, filename: str = "") -> dict:
+    """Parse an exported history file into [{question, answer, asked_at}].
+
+    Accepts Takeout Search JSON (title/titleUrl with q=), query objects,
+    Q&A conversation pairs, and plain one-query-per-line text. Anything
+    unrecognised is counted in ``skipped``, never fatal.
+    """
+    name = (filename or "").lower()
+    text = (content or b"").decode("utf-8", errors="replace")
+    items: list[dict] = []
+    skipped = 0
+    if name.endswith(".json") or text.lstrip().startswith(("{", "[")):
+        try:
+            doc = json.loads(text)
+        except Exception:
+            return {"items": [], "skipped": 1,
+                    "reason": "not parseable JSON"}
+        entries = doc
+        if isinstance(doc, dict):
+            for key in ("items", "history", "activities", "events",
+                        "conversations", "queries"):
+                if isinstance(doc.get(key), list):
+                    entries = doc[key]
+                    break
+            else:
+                entries = [doc]
+        if not isinstance(entries, list):
+            entries = [entries]
+        for e in entries:
+            if not isinstance(e, dict):
+                if isinstance(e, str) and e.strip():
+                    items.append({"question": e.strip(), "answer": None,
+                                  "asked_at": None})
+                else:
+                    skipped += 1
+                continue
+            q, a, when = _entry_parts(e)
+            if q:
+                items.append({"question": q, "answer": a, "asked_at": when})
+            else:
+                skipped += 1
+    else:
+        for line in text.splitlines():
+            line = line.strip().lstrip("\ufeff")
+            if line:
+                items.append({"question": line[:2000], "answer": None,
+                              "asked_at": None})
+            # Blank lines are separators, not skips.
+    return {"items": items, "skipped": skipped}
+
+
+def _entry_parts(e: dict) -> tuple[str | None, str | None, str | None]:
+    """One Takeout-ish entry -> (question, answer, asked_at)."""
+    when = None
+    for k in ("time", "timestamp", "asked_at", "created", "date"):
+        v = e.get(k)
+        if isinstance(v, str) and v.strip():
+            when = v.strip()[:40]
+            break
+    answer = None
+    for k in ("answer", "response", "answer_text", "model_response"):
+        v = e.get(k)
+        if isinstance(v, dict):
+            v = v.get("text")
+        # First key present wins, but an absent key must not stop the search:
+        # breaking unconditionally here once dropped every "response"-shaped
+        # conversation while keeping the "answer"-shaped ones.
+        if isinstance(v, str) and v.strip():
+            answer = v.strip()[:20000]
+            break
+    # Q&A pair shape first — it names both sides explicitly.
+    for k in ("question", "query_text", "prompt"):
+        v = e.get(k)
+        if isinstance(v, dict):
+            v = v.get("query_text") or v.get("text")
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:2000], answer, when
+    q = e.get("query")
+    if isinstance(q, dict):
+        q = q.get("query_text") or q.get("text")
+    if isinstance(q, str) and q.strip():
+        return q.strip()[:2000], answer, when
+    title = e.get("title")
+    if isinstance(title, str) and title.strip():
+        # Takeout Search rows carry the query in titleUrl's q= param; the
+        # title itself ("Searched for ...") is the fallback, not the prize.
+        url = e.get("titleUrl") or e.get("url") or ""
+        m = re.search(r"[?&]q=([^&]+)", str(url))
+        if m:
+            try:
+                from urllib.parse import unquote_plus
+                decoded = unquote_plus(m.group(1)).strip()
+                if decoded:
+                    return decoded[:2000], answer, when
+            except Exception:
+                pass
+        cleaned = re.sub(r"^(searched for|visited|asked)\s+", "", title.strip(),
+                         flags=re.I)
+        if cleaned:
+            return cleaned[:2000], answer, when
+    text = e.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()[:2000], answer, when
+    return None, None, None
+
+
+def auto_tags(text: str) -> list[str]:
+    """Content-derived tags: taxonomy domains, named actors, drivers.
+
+    Deterministic over the taxonomy — no model, so tagging ten thousand
+    imported queries costs nothing and never varies between runs.
+    """
+    from . import explainer as _expl
+    tags: list[str] = []
+    for d in _expl._domains_in_text(text or ""):
+        label = D.domain_label(d)
+        if label not in tags:
+            tags.append(label)
+    low = f" {(text or '').lower()} "
+    for alias, display in _TAG_DISPLAY.items():
+        if re.search(r"\b" + re.escape(alias) + r"\b", low):
+            if display not in tags:
+                tags.append(display)
+            continue
+        expansion = D.ENTITY_ALIASES.get(alias, "")
+        if expansion and expansion in low and display not in tags:
+            tags.append(display)
+    for drv in D.DRIVERS.values():
+        label = drv["label"].lower()
+        if label in low and drv["label"] not in tags:
+            tags.append(drv["label"])
+    return tags[:12]
+
+
+def auto_group(text: str, domains: list[str]) -> str:
+    """One group label per thread: the best-fitting driver, else the domains.
+
+    A thread list grouped by thirty distinct labels is not grouped at all, so
+    drivers (sixteen, stable) win over domain pairs whenever one fits.
+    """
+    doms = [d for d in (domains or []) if d in D.DOMAINS]
+    best, best_overlap = None, 0
+    for _key, drv in D.DRIVERS.items():
+        overlap = len(set(drv["domains"]) & set(doms))
+        if overlap > best_overlap:
+            best, best_overlap = drv["label"], overlap
+    if best:
+        return best
+    if len(doms) == 1:
+        return D.domain_label(doms[0])
+    if doms:
+        shorts = [D.DOMAINS[d]["short"] for d in doms[:2]]
+        return " + ".join(shorts)
+    return "unclassified"
+
+
+def _norm_question(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").lower().strip().strip("?."))[:500]
+
+
+def import_history(db, items: list[dict]) -> dict:
+    """Store parsed history as tagged, grouped threads in the archive.
+
+    Dedupe is by normalized question: re-importing the same Takeout file is
+    a no-op for rows already here, so the count honestly reports what is new.
+    Imported answers are stored verbatim and never auto-saved to the graph —
+    they are ungrounded external text, and a pre-accepted projection artifact
+    would launder them into evidence.
+    """
+    from .models import Explanation as _E
+    archive = get_archive(db)
+    existing = {_norm_question(e.question or "")
+                for e in db.query(_E).filter(
+                    _E.investigation_id == archive.id).all()}
+    created = skipped = answered = 0
+    for item in items or []:
+        q = (item.get("question") or "").strip()
+        if not q:
+            skipped += 1
+            continue
+        if _norm_question(q) in existing:
+            skipped += 1
+            continue
+        answer = (item.get("answer") or "").strip() or ""
+        text = f"{q}\n{answer}" if answer else q
+        from . import explainer as _expl
+        domains = [d for d in _expl._domains_in_text(text)
+                   if d in D.DOMAINS]
+        tags = auto_tags(text)
+        group = auto_group(text, domains)
+        row = _E(
+            investigation_id=archive.id, question=q[:2000],
+            answer=answer[:20000] if answer else "",
+            mode="explain", depth="balanced", audience="intermediate",
+            status="imported", domains_json=json.dumps(sorted(domains)),
+            sources_json=json.dumps([]),
+            trace=json.dumps({
+                "imported": True,
+                "import_tags": tags,
+                "import_group": group,
+                "imported_at": item.get("asked_at"),
+            }))
+        db.add(row)
+        existing.add(_norm_question(q))
+        created += 1
+        if answer:
+            answered += 1
+    db.commit()
+    return {"created": created, "skipped": skipped, "answered": answered,
+            "archive_id": archive.id}
 
 
 def thread_root_id(db, explanation_id: int) -> int | None:

@@ -1614,6 +1614,21 @@ async function viewAsk(el) {
     <div class="card">
       <h3><i class="fas fa-list"></i> Threads
         <span class="sub">follow-ups nest; two replies to one message is a branch</span></h3>
+      <div class="row" style="margin-bottom:10px">
+        <div class="field" style="margin:0;flex:1"><label>Group</label>
+          <select id="askGroup" onchange="loadAskThreads()"><option value="">All groups</option></select></div>
+        <div class="field" style="margin:0;flex:2"><label>Import Google AI Mode / Takeout history</label>
+          <div style="display:flex;gap:8px">
+            <input type="file" id="askFile" accept=".json,.txt,.csv"
+              style="padding:6px" title="Takeout Search JSON, Q&A JSON, or one query per line">
+            <button class="btn sm" onclick="importHistory()">Import</button>
+          </div></div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">
+        Takeout Search JSON, conversation JSON, or plain one-query-per-line text.
+        Imports are tagged and grouped from their content, deduplicated, and left
+        unanswered until you press Answer — imported text is never evidence until then.</div>
+      <div id="askImportStatus"></div>
       <div id="askThreads"><div class="empty">Loading…</div></div>
     </div>
     <div id="askThread"></div>`;
@@ -1650,16 +1665,32 @@ async function loadAskThreads() {
   const box = $('#askThreads');
   if (!box) return;
   try {
-    const data = await api('/api/ask/threads?limit=30');
+    const group = $('#askGroup')?.value || '';
+    State.askGroup = group;
+    const data = await api('/api/ask/threads?limit=30' + (group ? '&group=' + encodeURIComponent(group) : ''));
     State.askThreadList = data.threads;
+    const sel = $('#askGroup');
+    if (sel && sel.options.length <= 1 && (data.groups || []).length) {
+      const keep = State.askGroup || '';
+      sel.innerHTML = '<option value="">All groups</option>' +
+        data.groups.map(g => `<option value="${esc(g.group)}">${esc(g.group)} (${g.count})</option>`).join('');
+      if (keep) sel.value = keep;
+    }
     box.innerHTML = data.threads.map(t => `
-      <div class="source-item" style="margin-bottom:7px;cursor:pointer"
-        onclick="openAskThread(${t.id})">
-        <div><strong>${esc(t.question.slice(0, 110))}</strong></div>
+      <div class="source-item" style="margin-bottom:7px">
+        <div style="cursor:pointer" onclick="openAskThread(${t.id})">
+          <strong>${esc(t.question.slice(0, 110))}</strong></div>
         <div style="color:var(--text3);font-size:11px;margin-top:4px">
-          ${t.replies ? t.replies + (t.replies === 1 ? ' reply' : ' replies') + ' · ' : ''}
+          <span class="tag">${esc(t.group || (t.imported ? 'imported' : 'asked'))}</span>
+          ${(t.tags || []).slice(0, 5).map(tag => `<span class="tag" style="color:var(--teal)">${esc(tag)}</span>`).join('')}
+          <span>${t.replies ? t.replies + (t.replies === 1 ? ' reply' : ' replies') + ' · ' : ''}
           ${esc(t.status)}${t.confidence != null ? ' · conf ' + t.confidence.toFixed(2) : ''}
-          · ${fmtDate(t.created_at)}</div>
+          · ${fmtDate(t.created_at)}</span>
+        </div>
+        <div class="art-actions" style="margin-top:7px" onclick="event.stopPropagation()">
+          <button class="btn sm" onclick="openAskThread(${t.id})">Open thread</button>
+          ${t.status === 'imported' ? `<button class="btn sm primary" onclick="answerImported(${t.id})">Answer</button>` : ''}
+        </div>
       </div>`).join('') || '<div class="empty">No threads yet. Answers land here as they finish.</div>';
     // A just-asked question opens itself once the queue drains it.
     if (State.askPendingQ) {
@@ -1667,6 +1698,40 @@ async function loadAskThreads() {
       if (hit) { State.askPendingQ = null; State.askOpen = hit.id; await openAskThread(hit.id); }
     }
   } catch (e) { box.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; }
+}
+
+async function answerImported(id) {
+  try {
+    await api('/api/ask', { method: 'POST',
+      body: JSON.stringify({ explanation_id: id }) });
+    toast('Answering into the imported thread.', 'ok');
+    startPolling();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function importHistory() {
+  const input = $('#askFile');
+  const status = $('#askImportStatus');
+  if (!input?.files?.length) return toast('Choose an export file first.', 'err');
+  const form = new FormData();
+  form.append('file', input.files[0]);
+  status.innerHTML = '<div class="empty">Parsing…</div>';
+  try {
+    const res = await fetch('/api/ask/import', {
+      method: 'POST',
+      headers: { 'X-Econ-Session': SESSION, 'X-Econ-Client': 'tui' },
+      body: form,
+    });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.detail || res.statusText);
+    status.innerHTML = `<div class="banner ${out.created ? 'ok' : 'warn'}" style="margin:10px 0">
+      <i class="fas fa-file-import"></i><span>Imported ${out.created} question(s) as tagged threads.</span></div>`;
+    input.value = '';
+    await loadAskThreads();
+  } catch (e) {
+    status.innerHTML = '';
+    toast(e.message, 'err');
+  }
 }
 
 async function openAskThread(id) {

@@ -1988,13 +1988,14 @@ def leadership_board_pdf(investigation_id: int | None = None,
 # Ask: estate-wide questions over collected evidence + the live web
 # ==========================================================================
 class AskIn(BaseModel):
-    question: str
+    question: str = ""
     scope: str = "all"  # "all" or "inv:<id>"
     mode: str = "explain"
     depth: str = "balanced"
     audience: str = "intermediate"
     parent_id: int | None = None
     include_web: bool = True
+    explanation_id: int | None = None  # resume: answer into this row
 
 
 @app.post("/api/ask")
@@ -2002,10 +2003,20 @@ def ask_question(body: AskIn, db: Session = Depends(get_db)):
     """Ask anything of everything collected, plus the live web.
 
     Scope ``all`` searches every investigation's artifacts; ``inv:<id>``
-    scopes to one. Long work goes through the queue like everything else.
+    scopes to one. Pass ``explanation_id`` to answer into an existing row
+    (e.g. an imported question) instead of starting a new thread. Long work
+    goes through the queue like everything else.
     """
-    if not (body.question or "").strip():
-        raise HTTPException(400, "question is required")
+    if body.explanation_id is not None:
+        row = db.query(Explanation).filter(
+            Explanation.id == body.explanation_id).first()
+        if row is None:
+            raise HTTPException(404, "no such explanation to resume")
+        question = (body.question or "").strip() or row.question
+    else:
+        if not (body.question or "").strip():
+            raise HTTPException(400, "question is required")
+        question = body.question
     if body.mode not in expl.MODES:
         raise HTTPException(400, f"mode must be one of {sorted(expl.MODES)}")
     if body.scope != "all":
@@ -2016,19 +2027,56 @@ def ask_question(body: AskIn, db: Session = Depends(get_db)):
             Explanation.id == body.parent_id).first() is None:
         raise HTTPException(404, "no such parent explanation")
     job = jobqueue.enqueue("ask", {
-        "question": body.question, "scope": body.scope, "mode": body.mode,
+        "question": question, "scope": body.scope, "mode": body.mode,
         "depth": body.depth, "audience": body.audience,
-        "parent_id": body.parent_id, "include_web": body.include_web})
+        "parent_id": body.parent_id, "include_web": body.include_web,
+        "resume_id": body.explanation_id})
     return {**job, "queued": True}
 
 
 @app.get("/api/ask/threads")
 def ask_threads(investigation_id: int | None = None, limit: int = 30,
-                db: Session = Depends(get_db)):
+                group: str | None = None, db: Session = Depends(get_db)):
     """Thread roots, newest first. Roots live in the Ask archive until one is
-    promoted — pass an investigation id to see only its threads."""
+    promoted — pass an investigation id to see only its threads, or a group
+    to filter by the content-derived grouping."""
     from . import ask as _ask
-    return _ask.list_threads(db, investigation_id, limit=limit)
+    return _ask.list_threads(db, investigation_id, limit=limit, group=group)
+
+
+@app.post("/api/ask/import")
+async def ask_import(request: Request, db: Session = Depends(get_db)):
+    """Import a Google AI Mode / Takeout history export as tagged threads.
+
+    Accepts Takeout Search JSON (title/titleUrl), query objects, Q&A
+    conversation pairs, or plain one-query-per-line text — anything else in
+    the file is counted in ``skipped``, never fatal. Every stored question is
+    tagged and grouped from its own content (domains, named actors, drivers),
+    deduplicated against the archive, and left unanswered until asked:
+    imported answers are stored verbatim and never auto-saved to the graph.
+    """
+    from . import ask as _ask
+    try:
+        form = await request.form()
+    except Exception:
+        raise HTTPException(400, "multipart file upload is required")
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "multipart field 'file' is required")
+    content = await upload.read()
+    if not content or len(content) > 10_000_000:
+        raise HTTPException(400, "empty file or over the 10MB cap")
+    parsed = _ask.parse_history_file(content, getattr(upload, "filename", ""))
+    if not parsed["items"] and parsed["skipped"]:
+        return {"created": 0, "skipped": parsed["skipped"],
+                "reason": parsed.get("reason", "nothing recognisable")}
+    out = _ask.import_history(db, parsed["items"])
+    out["skipped"] += parsed["skipped"]
+    with L.scope(f"import-{out['archive_id']}",
+                 L.Mandate(objective="human history import"),
+                 label="history import"):
+        L.record_human_action("history.import", out, actor="operator")
+    return out
 
 
 @app.get("/api/explanations/{exp_id}/tree")

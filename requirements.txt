@@ -12,3 +12,4 @@ reportlab==4.2.2
 pillow==11.3.0
 rich==15.0.0
 click==8.5.0
+python-multipart==0.0.20

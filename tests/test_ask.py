@@ -264,6 +264,92 @@ def test_agents_ask_intent_queues(client):
     assert r.status_code == 400
 
 
+def _upload(client, content, filename="takeout.json"):
+    return client.post("/api/ask/import", files={"file": (filename, content)})
+
+
+def test_import_takeout_search_json(client):
+    import json as _json
+    payload = _json.dumps([
+        {"header": "Search", "title": "Searched for federal reserve rate decision",
+         "titleUrl": "https://www.google.com/search?q=federal+reserve+rate+decision",
+         "time": "2026-09-01T10:00:00Z"},
+        {"header": "Search", "title": "Searched for stablecoin reserves",
+         "titleUrl": "https://www.google.com/search?q=stablecoin+reserves",
+         "time": "2026-09-02T10:00:00Z"},
+        {"header": "Search", "title": "", "titleUrl": ""},
+    ]).encode()
+    r = _upload(client, payload).json()
+    assert r["created"] == 2 and r["skipped"] == 1
+    threads = client.get("/api/ask/threads").json()
+    assert threads["count"] == 2
+    first = [t for t in threads["threads"]
+             if "federal reserve" in t["question"].lower()][0]
+    assert first["imported"] is True
+    assert "Monetary policy" in first["tags"] or first["tags"]
+    assert first["group"], "every import lands in a group"
+    # Re-importing the same file is a no-op for rows already here.
+    r2 = _upload(client, payload).json()
+    assert r2["created"] == 0 and r2["skipped"] == 3
+
+
+def test_import_conversations_and_text_lines(client):
+    import json as _json
+    conv = _json.dumps({"conversations": [
+        {"question": "Will tariffs raise CPI?",
+         "answer": "Yes, via import prices over two quarters.",
+         "asked_at": "2026-09-03"},
+        {"query": {"query_text": "Suez canal freight rates"},
+         "response": {"text": "Rates tripled after the closure."}},
+    ]}).encode()
+    r = _upload(client, conv).json()
+    assert r["created"] == 2 and r["answered"] == 2
+    lines = b"quantum computing outlook\n\ndatacenter power demand\n"
+    r = _upload(client, lines, filename="queries.txt").json()
+    assert r["created"] == 2
+    # Groups reflect content: tariff question groups under a driver or domain.
+    tariffs = [t for t in client.get("/api/ask/threads").json()["threads"]
+               if "tariff" in t["question"].lower()][0]
+    assert tariffs["group"] != "unclassified"
+    suez = [t for t in client.get("/api/ask/threads").json()["threads"]
+            if "suez" in t["question"].lower()][0]
+    assert any("suez" in str(t).lower() or "canal" in str(t).lower()
+               for t in suez["tags"])
+    # Group filter narrows; unknown files are rejected honestly.
+    g = tariffs["group"]
+    assert all(t["group"] == g for t in
+               client.get(f"/api/ask/threads?group={g}").json()["threads"])
+    groups = client.get("/api/ask/threads").json()["groups"]
+    assert any(x["group"] == g and x["count"] >= 1 for x in groups)
+    bad = _upload(client, b"\xff\xfe not json {", filename="x.json").json()
+    assert bad["created"] == 0
+    assert client.post("/api/ask/import").status_code in (400, 422)
+
+
+def test_imported_question_answers_in_place(client):
+    import json as _json
+    r = _upload(client, _json.dumps(
+        [{"query": "How does the rate decision reach reserves?"}]).encode()).json()
+    assert r["created"] == 1
+    imported = [t for t in client.get("/api/ask/threads").json()["threads"]
+                if t["imported"]][0]
+    assert imported["status"] == "imported"
+    assert imported["tags"] and imported["group"]
+    # Answering fills the same row: no duplicate thread appears.
+    client.post("/api/ask", json={"explanation_id": imported["id"]})
+    _drain()
+    assert client.get("/api/ask/threads").json()["count"] == 1
+    full = client.get(f"/api/explanations/{imported['id']}").json()
+    assert full["status"] == "done" and full["answer"]
+    assert full["trace"]["ask"] is True
+    # Tags and group survive answering: they describe the question, not the run.
+    again = [t for t in client.get("/api/ask/threads").json()["threads"]
+             if t["id"] == imported["id"]][0]
+    assert again["tags"] == imported["tags"]
+    assert client.post("/api/ask", json={
+        "explanation_id": 999999}).status_code == 404
+
+
 def test_thread_graph_names_messages_evidence_and_edges(client):
     inv = _seed_collected(client)
     root = _ask(client)

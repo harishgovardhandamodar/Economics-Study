@@ -180,11 +180,12 @@ def _run(to: str, intent: str, payload: dict, db) -> dict[str, Any]:
     if to == "ask" and intent == "ask.answer":
         from . import jobqueue
         question = (payload.get("question") or "").strip()
-        if not question:
+        if not question and not payload.get("explanation_id"):
             raise ValueError("question is required")
         return jobqueue.enqueue(
             "ask", {"question": question,
                     "scope": payload.get("scope", "all"),
                     "mode": payload.get("mode", "explain"),
-                    "parent_id": payload.get("parent_id")})
+                    "parent_id": payload.get("parent_id"),
+                    "resume_id": payload.get("explanation_id")})
     raise ValueError(f"no handler for {to}/{intent}")
