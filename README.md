@@ -430,6 +430,15 @@ on another's question, plus alerts.
 diagrams live (Mermaid via CDN, source fallback offline). Served from a
 constant index, never a directory listing, so no input can become a path.
 
+**Ask** (top-level app) — estate-wide Q&A over collected evidence plus live
+web, with grounded answers, deterministic channel maps, attachments and source
+links, a per-thread knowledge graph, and elastic FTS search across everything.
+Threads nest and branch; any answer promotes into an investigation. A history
+import takes a Google AI Mode / Takeout export (Search JSON, conversation
+JSON, or one-query-per-line text), tags and groups every question from its
+content (domains, named actors, drivers), deduplicates, and leaves imports
+unanswered until asked — imported text is never evidence until then.
+
 PDFs attach where they belong: the dossier, each assessment, and the board all
 offer a PDF button next to their Markdown one. Rendered in-process with
 reportlab — no chromium, no LaTeX in the image.
