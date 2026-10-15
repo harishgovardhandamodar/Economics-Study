@@ -402,8 +402,20 @@ artifact with the reason it was kept.
 one newest-first stream, with per-chain verification.
 
 **Audit ledger** — the integrity monitor (chains verified / broken / audit
-drops), a chain browser with per-event verification, and the self-verifying
-export.
+drops), a chain browser with per-event verification, the self-verifying
+export, and the SIEM export (cursor-paged JSON lines, minimised payloads).
+
+**Frameworks** — twelve policy regimes (Basel III, MiCA, GENIUS, IMF
+surveillance…) scored 0..100 per governed domain from stored evidence. Count
+caps fast; directional mass decides.
+
+**Agents** — the app's agents as A2A cards (`/.well-known/econ-agents`), every
+intent deterministic over stored rows. Invoke one hop directly from
+`POST /api/agents/invoke`.
+
+PDFs attach where they belong: the dossier, each assessment, and the board all
+offer a PDF button next to their Markdown one. Rendered in-process with
+reportlab — no chromium, no LaTeX in the image.
 
 ---
 
@@ -496,6 +508,7 @@ mapper too would only prove the mocks agree with each other.
 | `test_assess_api.py` | Queue → read → decide → rescore-as-new-row → compare; blind spots published |
 | `test_leadership_manager.py` | Empty board is honest; parse is side-effect free; run → compile → idempotent compile |
 | `test_small_surfaces.py` | Hide, prefs, feedback, save-to-graph dedupe, gap runs, similar, recommendations, compare |
+| `test_remaining.py` | SIEM cursor export + minimised payloads; framework matrix scoring; A2A invoke incl. rejections; real PDFs + hostile-markup renderer test |
 
 ---
 
@@ -523,7 +536,11 @@ app/
   drift.py           artifact drift and watched questions
   jobqueue.py        persisted, lease-based queue
   scheduler.py       cron, validated at set time
-  main.py            the API (94 routes)
+  siem.py            cursor-paged JSON-lines export, minimised payloads
+  frameworks.py      12 policy regimes scored against collected evidence
+  agents.py          A2A cards + deterministic dispatch
+  dossier_pdf.py     reportlab A4 reports (dossier, assessment, board)
+  main.py            the API (104 paths)
 static/index.html    the GUI
 scripts/seed.py      five cross-domain investigations
 ```

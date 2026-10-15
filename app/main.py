@@ -1770,3 +1770,110 @@ def get_control(inv_id: int, db: Session = Depends(get_db)):
             "allowed_domains": inv.domain_list or None,
             "budgets": {"schedule_max_items": inv.schedule_max_items,
                         "schedule_max_rounds": inv.schedule_max_rounds}}
+
+
+# ==========================================================================
+# policy-framework matrix (standards-coverage equivalent)
+# ==========================================================================
+@app.get("/api/frameworks")
+def frameworks_catalog():
+    from . import frameworks as _fw
+    return {"frameworks": [
+        {"id": fid, **{k: v for k, v in fw.items() if k != "domains"},
+         "domains": fw["domains"],
+         "domain_labels": [D.domain_label(d) for d in fw["domains"]]}
+        for fid, fw in _fw.FRAMEWORKS.items()]}
+
+
+@app.get("/api/frameworks/matrix")
+def frameworks_matrix(investigation_id: int | None = None,
+                      db: Session = Depends(get_db)):
+    """Every regime scored 0..100 per governed domain from stored evidence.
+
+    Pass an investigation id for one map's matrix, or nothing for the whole
+    estate. A regime whose domains have no evidence scores zero, visibly —
+    never a dash that reads as not-applicable.
+    """
+    from . import frameworks as _fw
+    if investigation_id is not None:
+        _get_inv(db, investigation_id)
+    return _fw.build_matrix(db, investigation_id)
+
+
+# ==========================================================================
+# A2A agent cards (debugging + agent-to-agent calls)
+# ==========================================================================
+class AgentInvokeIn(BaseModel):
+    to: str
+    intent: str
+    payload: dict | None = None
+    task_id: str | None = None
+
+
+@app.get("/.well-known/econ-agents")
+def well_known_agents():
+    from . import agents as _agents
+    return {"protocol": _agents.PROTOCOL, "agents": _agents.get_agent_cards()}
+
+
+@app.get("/api/agents/cards")
+def agent_cards():
+    from . import agents as _agents
+    return {"protocol": _agents.PROTOCOL, "agents": _agents.get_agent_cards()}
+
+
+@app.post("/api/agents/invoke")
+def agent_invoke(body: AgentInvokeIn, db: Session = Depends(get_db)):
+    """Invoke one protocol hop directly. Every intent is deterministic over
+    stored rows — nothing here calls a model or the network."""
+    from . import agents as _agents
+    env = _agents.new_envelope("api-caller", body.to, body.intent,
+                               body.payload or {}, task_id=body.task_id,
+                               note="direct invoke")
+    try:
+        return _agents.dispatch(env, db)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+# ==========================================================================
+# PDF export (reportlab, no system dependencies)
+# ==========================================================================
+def _pdf_response(filename: str, pdf: bytes) -> Response:
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/investigations/{inv_id}/dossier/pdf")
+def dossier_pdf(inv_id: int, db: Session = Depends(get_db)):
+    _get_inv(db, inv_id)
+    from . import dossier_pdf as _pdf
+    try:
+        filename, pdf = _pdf.build_investigation_pdf(db, inv_id)
+    except ValueError as e:
+        # Missing row -> 404. A render failure is a 500 and must not wear
+        # a 404's clothes: "not found" sends the operator looking for a
+        # row that exists.
+        raise HTTPException(404 if str(e).startswith("no such") else 500,
+                            str(e)) from e
+    return _pdf_response(filename, pdf)
+
+
+@app.get("/api/assessments/{assessment_id}/pdf")
+def assessment_pdf(assessment_id: int, db: Session = Depends(get_db)):
+    from . import dossier_pdf as _pdf
+    try:
+        filename, pdf = _pdf.build_assessment_pdf(db, assessment_id)
+    except ValueError as e:
+        raise HTTPException(404 if str(e).startswith("no such") else 500,
+                            str(e)) from e
+    return _pdf_response(filename, pdf)
+
+
+@app.get("/api/leadership/board.pdf")
+def leadership_board_pdf(investigation_id: int | None = None,
+                         db: Session = Depends(get_db)):
+    from . import dossier_pdf as _pdf
+    filename, pdf = _pdf.build_board_pdf(db, investigation_id)
+    return _pdf_response(filename, pdf)

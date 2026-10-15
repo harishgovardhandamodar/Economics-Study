@@ -215,3 +215,30 @@ def event_detail(event_hash: str, db: Session = Depends(get_db)):
             "data": json.loads(row.data_json or "{}"),
             "input_refs": json.loads(row.input_refs or "[]"),
             "prev_hash": row.prev_hash, "hash": row.hash, "trace": row.trace}
+
+
+@router.get("/siem-export")
+def siem_export(run_id: str | None = None, since: int = 0, limit: int = 200,
+                db: Session = Depends(get_db)):
+    """Stream the ledger to a SIEM as JSON lines with a cursor.
+
+    One cursor covers every chain: poll with the returned ``cursor`` and each
+    event arrives exactly once. Payloads are minimised (digests, never
+    prompts) — the fabric sees the decision without the data behind it.
+    """
+    from . import siem as _siem
+    return _siem.export_siem_events(
+        run_ids=[run_id] if run_id else None, since=since, limit=limit, db=db)
+
+
+@router.get("/siem-export/text")
+def siem_export_text(run_id: str | None = None, since: int = 0, limit: int = 200,
+                     db: Session = Depends(get_db)):
+    """The same export as newline-delimited JSON, for dumb pipes."""
+    from fastapi.responses import PlainTextResponse
+
+    from . import siem as _siem
+    out = _siem.export_siem_events(
+        run_ids=[run_id] if run_id else None, since=since, limit=limit, db=db)
+    return PlainTextResponse("\n".join(out["lines"]),
+                             media_type="application/x-ndjson")

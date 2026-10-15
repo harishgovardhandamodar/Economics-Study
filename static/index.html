@@ -385,6 +385,10 @@ table.tbl tr:hover td{background:var(--bg2)}
         <i class="fas fa-building-columns"></i> Board</div>
       <div class="tab" data-view="manager" onclick="switchView('manager')">
         <i class="fas fa-diagram-project"></i> Manager</div>
+      <div class="tab" data-view="frameworks" onclick="switchView('frameworks')">
+        <i class="fas fa-landmark"></i> Frameworks</div>
+      <div class="tab" data-view="agents" onclick="switchView('agents')">
+        <i class="fas fa-robot"></i> Agents</div>
       <div class="tab" data-view="summary" onclick="switchView('summary')">
         <i class="fas fa-chart-pie"></i> Summary</div>
       <div class="tab" data-view="console" onclick="switchView('console')">
@@ -623,7 +627,8 @@ async function refreshView() {
   const fns = {
     graph: viewGraph, artifacts: viewArtifacts, review: viewReview,
     gaps: viewGaps, explainer: viewExplainer, assess: viewAssess,
-    board: viewBoard, manager: viewManager,
+    board: viewBoard, manager: viewManager, frameworks: viewFrameworks,
+    agents: viewAgents,
     summary: viewSummary,
     console: viewConsole, timeline: viewTimeline, audit: viewAudit,
   };
@@ -1284,6 +1289,8 @@ async function showAssessment(id) {
   `, `
     <button class="btn" onclick="rescoreAssessment(${a.id})">Re-score (new row)</button>
     <button class="btn" onclick="decideAssessment(${a.id})">Decide</button>
+    <button class="btn" onclick="downloadFile('/api/assessments/${a.id}/pdf',
+      'assessment-${a.id}.pdf', 'Assessment PDF downloaded.')">PDF</button>
     <button class="btn primary" onclick="closeModal()">Close</button>`);
 }
 
@@ -1345,7 +1352,9 @@ async function viewBoard(el) {
       <div class="card"><h3><i class="fas fa-coins"></i> Exposure by driver</h3>
         ${Object.entries(b.exposure.by_driver).map(([k, v]) =>
           `<div style="font-size:12.5px;margin-bottom:6px"><strong>${esc(k)}</strong> — ${v.n} assessment(s), mean ${v.mean}%, max ${v.max}%</div>`).join('') || '<div class="empty">Nothing assessed yet.</div>'}
-        <div style="margin-top:12px"><button class="btn sm" onclick="downloadBoard()">Markdown</button></div></div>
+        <div style="margin-top:12px"><button class="btn sm" onclick="downloadBoard()">Markdown</button>
+        <button class="btn sm" onclick="downloadFile('/api/leadership/board.pdf',
+          'leadership-board.pdf', 'Board PDF downloaded.')">PDF</button></div></div>
     </div>
     <div class="card"><h3><i class="fas fa-list-check"></i> Decision queue
       <span class="sub">${b.decisions.n_waiting} waiting — highest exposure first</span></h3>
@@ -1430,6 +1439,48 @@ async function managerCompile(id) {
   } catch (e) { toast(e.message, 'err'); }
 }
 
+async function viewFrameworks(el) {
+  el.className = 'view';
+  const q = State.invId ? `?investigation_id=${State.invId}` : '';
+  const m = await api('/api/frameworks/matrix' + q);
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-landmark"></i> Policy-framework matrix
+        <span class="sub">${m.n_frameworks} regimes × their governed domains — ${State.invId ? 'this investigation' : 'whole estate'}</span></h3>
+      <p style="color:var(--text2);font-size:12.5px;margin-bottom:12px">
+        Count caps fast; directional mass decides. A regime whose domains have no
+        evidence scores zero, visibly — never a dash that reads as not-applicable.</p>
+      <table class="tbl"><thead><tr><th>Regime</th><th>Coverage</th><th>Mean</th>
+        ${[...new Set(m.frameworks.flatMap(r => Object.keys(r.cells)))].map(d =>
+          `<th>${esc(domLabel(d))}</th>`).join('')}</tr></thead><tbody>
+        ${m.frameworks.map(r => `<tr><td><strong>${esc(r.label)}</strong>
+          <div style="color:var(--text3);font-size:10.5px">${esc(r.body)} — ${esc(r.blurb)}</div></td>
+          <td>${r.covered}/${r.of} (${r.coverage_pct}%)</td><td>${r.mean_score}</td>
+          ${Object.entries(r.cells).map(([, c]) =>
+            `<td style="color:var(--${c.score >= 50 ? 'green' : c.score > 0 ? 'orange' : 'text3'})">${c.score}</td>`).join('')}
+        </tr>`).join('')}
+      </tbody></table></div>`;
+}
+
+async function viewAgents(el) {
+  el.className = 'view';
+  const d = await api('/api/agents/cards');
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-robot"></i> Agent cards
+        <span class="sub">protocol ${esc(d.protocol)} — every intent deterministic over stored rows</span></h3>
+      <div class="grid c2">${d.agents.map(a => `
+        <div class="domain-card"><div class="domain-name">${esc(a.name)}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:5px">${esc(a.description)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:7px">
+            intents: ${(a.intents || []).map(esc).join(', ')}</div>
+        </div>`).join('')}</div>
+      <p style="color:var(--text3);font-size:11.5px;margin-top:12px">
+        Invoke via <code>POST /api/agents/invoke</code> or discover at
+        <code>/.well-known/econ-agents</code>.</p>
+    </div>`;
+}
+
 // ---------- summary ----------
 async function viewSummary(el) {
   el.className = 'view';
@@ -1499,6 +1550,9 @@ async function viewSummary(el) {
         <div style="margin-top:14px;display:flex;gap:9px;flex-wrap:wrap">
           <button class="btn sm" onclick="showSummaryModal()">Overlay</button>
           <button class="btn sm" onclick="downloadDossier()">Markdown report</button>
+          <button class="btn sm" onclick="downloadFile(
+            `/api/investigations/${State.invId}/dossier/pdf`,
+            `${State.invId}-report.pdf`, 'Report PDF downloaded.')">PDF report</button>
           <button class="btn sm" onclick="detectDrift()">Detect drift</button>
         </div></div>
     </div>`;
@@ -1538,6 +1592,19 @@ async function downloadDossier() {
     a.download = `${State.invId}-report.md`;
     a.click();
     toast('Report downloaded.', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function downloadFile(path, filename, doneMsg) {
+  try {
+    const res = await fetch(path, { headers: { 'X-Econ-Session': SESSION } });
+    if (!res.ok) throw new Error(await res.text());
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    toast(doneMsg || 'Downloaded.', 'ok');
   } catch (e) { toast(e.message, 'err'); }
 }
 
@@ -1686,6 +1753,8 @@ async function loadChain() {
       ${v.unknown_kinds?.length ? ` Unknown kinds: ${v.unknown_kinds.join(', ')}.` : ''}</span></div>
     <div style="margin-bottom:12px;display:flex;gap:9px;flex-wrap:wrap">
       <button class="btn sm" onclick="exportChain('${id}')"><i class="fas fa-file-export"></i> Export self-verifying bundle</button>
+      <button class="btn sm" onclick="downloadFile('/api/ledger/siem-export/text?run_id=${id}&limit=500',
+        '${id}-siem.ndjson', 'SIEM lines downloaded (minimised payloads).')"><i class="fas fa-tower-broadcast"></i> SIEM export</button>
     </div>
     <div class="chain">${data.events.slice(0, 200).map(chainEvent).join('')}</div>`;
 }
