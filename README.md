@@ -434,10 +434,12 @@ constant index, never a directory listing, so no input can become a path.
 web, with grounded answers, deterministic channel maps, attachments and source
 links, a per-thread knowledge graph, and elastic FTS search across everything.
 Threads nest and branch; any answer promotes into an investigation. A history
-import takes a Google AI Mode / Takeout export (Search JSON, conversation
-JSON, or one-query-per-line text), tags and groups every question from its
-content (domains, named actors, drivers), deduplicates, and leaves imports
-unanswered until asked — imported text is never evidence until then.
+import takes a Takeout **.zip** (unpacked server-side under zip-bomb caps) or
+extracted activity **HTML** (search anchors plus timestamps), Qwen-style message
+arrays, ChatGPT mapping exports, Markdown transcripts, or plain text — tagging
+and grouping every question from its content (domains, named actors, drivers),
+deduplicating, and leaving imports unanswered until asked — imported text is
+never evidence until then.
 
 PDFs attach where they belong: the dossier, each assessment, and the board all
 offer a PDF button next to their Markdown one. Rendered in-process with
