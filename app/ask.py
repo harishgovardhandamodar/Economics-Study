@@ -471,20 +471,25 @@ def import_conversations(db, group: str | None = None,
 IMPORTS_GRAPH_LIMIT = 500
 
 
-def imports_graph(db, group: str | None = None) -> dict:
+def imports_graph(db, group: str | None = None,
+                  mode: str = "group") -> dict:
     """All imported chat items as one clustered graph for navigation.
 
-    Group hubs plus member items, nothing else: the grouping *is* the
-    clustering, computed from content at import time. Item nodes carry status
-    color (pending orange, answered green) so the unanswered work is visible
-    at a glance. Clicking navigates — the graph answers "what did I ask about
-    X and what is still open", not "what does the evidence say".
+    Two lenses on the same items. ``group`` clusters by the import-time
+    content grouping (driver or domain pair). ``tags`` clusters by shared
+    vocabulary instead: items sharing two or more tags union into a component
+    labeled by its most common tag — the organic structure underneath the
+    assigned groups, where two drivers' questions turn out to ask the same
+    thing. Group hubs plus member items either way; orange pending, green
+    answered.
     """
     from .models import Explanation as _E
     rows = (db.query(_E).filter(_E.parent_id.is_(None))
             .order_by(_E.id.desc()).limit(IMPORTS_GRAPH_LIMIT + 1).all())
     imported = [r for r in rows if _trace_of(r).get("imported")]
     truncated = len(rows) > IMPORTS_GRAPH_LIMIT
+    if mode == "tags":
+        return _tag_cluster_graph(imported, group)
     by_group: dict[str, list] = {}
     for r in imported:
         g = _trace_of(r).get("import_group") or "imported"
@@ -524,9 +529,108 @@ def imports_graph(db, group: str | None = None) -> dict:
     return {
         "nodes": nodes, "edges": edges,
         "truncated": truncated, "limit": IMPORTS_GRAPH_LIMIT,
+        "mode": "group",
         "groups": [{"group": g, "count": len(m)}
                    for g, m in sorted(by_group.items())],
         "counts": {"items": n_items, "groups": len(by_group)},
+    }
+
+
+def _tag_cluster_graph(rows: list, group: str | None = None) -> dict:
+    """Cluster imported items by shared tags (union-find over tag overlap).
+
+    Two items sharing two or more tags join one component; the component is
+    labeled by its most common tag. Single shared tags do not join — one
+    generic tag ("rates") would blob the whole estate into one cluster, which
+    is the exact failure the threshold exists to prevent. Members of one
+    import group scatter across components freely: that scatter *is* the
+    finding (two drivers asking the same thing).
+    """
+    items = []
+    for r in rows:
+        t = _trace_of(r)
+        gname = t.get("import_group") or "imported"
+        if group is not None and gname != group:
+            continue
+        tags = t.get("import_tags", [])
+        items.append({"row": r, "group": gname,
+                      "tags": [x for x in tags if isinstance(x, str)][:12]})
+    parent = {id(it["row"]): id(it["row"]) for it in items}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    tag_to_ids: dict[str, list] = {}
+    for it in items:
+        for tag in set(it["tags"]):
+            tag_to_ids.setdefault(tag, []).append(id(it["row"]))
+    for ids in tag_to_ids.values():
+        if len(ids) < 2:
+            continue
+        # Pairs sharing this tag: all must share ANOTHER tag to join, so
+        # count pairwise overlap rather than unioning the whole tag group.
+        tag_sets = {i: set(next(
+            it["tags"] for it in items if id(it["row"]) == i)) for i in ids}
+        base = ids[0]
+        for other in ids[1:]:
+            if len(tag_sets[base] & tag_sets[other]) >= 2:
+                union(base, other)
+    from collections import Counter
+    comp: dict[int, list] = {}
+    for it in items:
+        comp.setdefault(find(id(it["row"])), []).append(it)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    clusters = []
+    for k, members in enumerate(sorted(comp.values(), key=lambda m: -len(m))):
+        counts = Counter(t for it in members for t in it["tags"])
+        label = counts.most_common(1)[0][0] if counts else "untagged"
+        hub = f"t:{k}"
+        nodes.append({
+            "id": hub, "label": f"{label} ({len(members)})",
+            "title": " · ".join(t for t, _ in counts.most_common(4)),
+            "group": "taghub",
+            "color": {"background": "#6e7681", "border": "#ffffff"},
+            "value": 3,
+        })
+        clusters.append({"label": label,
+                         "tags": [t for t, _ in counts.most_common(4)],
+                         "member_ids": [it["row"].id for it in members]})
+        for it in members:
+            r = it["row"]
+            done = r.status == "done"
+            nodes.append({
+                "id": f"i:{r.id}",
+                "label": (r.question or "")[:70],
+                "title": r.question or "",
+                "group": "import",
+                "color": {"background": "#3fb950" if done else "#d29922",
+                          "border": "#3fb950" if done else "#d29922"},
+                "value": 1,
+                "status": r.status,
+                "explanation_id": r.id,
+            })
+            edges.append({
+                "id": f"c:{hub}:{r.id}", "from": f"i:{r.id}", "to": hub,
+                "label": "shares_tags",
+                "title": ", ".join(it["tags"][:4]),
+                "color": {"color": "#6e7681"}, "dashes": True,
+            })
+    return {
+        "nodes": nodes, "edges": edges,
+        "truncated": False, "limit": IMPORTS_GRAPH_LIMIT,
+        "mode": "tags",
+        "groups": [],
+        "clusters": clusters,
+        "counts": {"items": len(items), "clusters": len(clusters)},
     }
 
 
@@ -1112,6 +1216,7 @@ def import_history(db, items: list[dict]) -> dict:
                 for e in db.query(_E).filter(
                     _E.investigation_id == archive.id).all()}
     created = skipped = answered = 0
+    made: list = []
     for item in items or []:
         q = (item.get("question") or "").strip()
         if not q:
@@ -1142,11 +1247,21 @@ def import_history(db, items: list[dict]) -> dict:
                 "imported_at": item.get("asked_at"),
             }))
         db.add(row)
+        made.append(row)
         existing.add(_norm_question(q))
         created += 1
         if answer:
             answered += 1
     db.commit()
+    # Index only after the commit: index_explanation rolls back on failure,
+    # which must never be allowed to take the flushed import rows with it.
+    # Worst case is "searchable after reindex", never lost imports.
+    try:
+        from . import search_index as _si
+        for row in made:
+            _si.index_explanation(db, row)
+    except Exception:
+        pass
     return {"created": created, "skipped": skipped, "answered": answered,
             "archive_id": archive.id}
 

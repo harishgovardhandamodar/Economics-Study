@@ -2054,12 +2054,19 @@ def ask_imports(group: str | None = None, limit: int = 100,
 
 
 @app.get("/api/ask/imports/graph")
-def ask_imports_graph(group: str | None = None,
+def ask_imports_graph(group: str | None = None, mode: str = "group",
                       db: Session = Depends(get_db)):
     """All imported chat items as one clustered graph: group hubs plus member
-    items, orange pending and green answered. Navigation, not evidence."""
+    items, orange pending and green answered. Navigation, not evidence.
+
+    ``mode=group`` clusters by the import-time content grouping; ``mode=tags``
+    clusters by shared vocabulary instead (two shared tags to join), showing
+    where different groups ask the same thing.
+    """
+    if mode not in ("group", "tags"):
+        raise HTTPException(400, "mode must be group or tags")
     from . import ask as _ask
-    return _ask.imports_graph(db, group)
+    return _ask.imports_graph(db, group, mode=mode)
 
 
 @app.get("/api/ask/imports/conversations")

@@ -1983,20 +1983,21 @@ async function viewImports(el) {
   el.className = 'view';
   const group = State.importsGroup || '';
   const mode = State.importsMode || 'chats';
+  const clusterMode = State.importsClusterMode || 'group';
   const q = group ? '?group=' + encodeURIComponent(group) : '';
-  const [g, list, convs] = await Promise.all([
-    api('/api/ask/imports/graph' + q).catch(() => ({ nodes: [], edges: [], groups: [], counts: {} })),
-    api('/api/ask/imports?limit=100' + (group ? '&group=' + encodeURIComponent(group) : '')).catch(() => ({ threads: [], groups: [] })),
+  const [g, convs] = await Promise.all([
+    api('/api/ask/imports/graph' + q + (q ? '&' : '?') + 'mode=' + clusterMode).catch(() => ({ nodes: [], edges: [], groups: [], counts: {} })),
     api('/api/ask/imports/conversations' + (group ? '?group=' + encodeURIComponent(group) : '')).catch(() => ({ conversations: [] })),
   ]);
   const counts = g.counts || {};
-  const done = list.threads.filter(t => t.status === 'done').length;
+  const turns = convs.conversations.flatMap(c => c.items);
+  const answered = turns.filter(t => t.answer).length;
   el.innerHTML = `
     <div class="grid c4" style="margin-bottom:14px">
-      <div class="stat"><div class="n">${counts.items ?? 0}</div><div class="l">Imported items</div></div>
-      <div class="stat"><div class="n">${counts.groups ?? 0}</div><div class="l">Groups</div></div>
-      <div class="stat"><div class="n" style="color:var(--green)">${done}</div><div class="l">Answered</div></div>
-      <div class="stat"><div class="n" style="color:var(--orange)">${(counts.items ?? 0) - done}</div><div class="l">Awaiting answer</div></div>
+      <div class="stat"><div class="n">${counts.items ?? turns.length}</div><div class="l">Imported items</div></div>
+      <div class="stat"><div class="n">${convs.conversations.length}</div><div class="l">Conversations</div></div>
+      <div class="stat"><div class="n" style="color:var(--green)">${answered}</div><div class="l">Answered turns</div></div>
+      <div class="stat"><div class="n" style="color:var(--orange)">${turns.length - answered}</div><div class="l">Awaiting answer</div></div>
     </div>
     <div class="card">
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
@@ -2004,6 +2005,9 @@ async function viewImports(el) {
           <i class="fas fa-comments"></i> Conversations</button>
         <button class="btn sm ${mode === 'clusters' ? 'primary' : ''}" onclick="setImportsMode('clusters')">
           <i class="fas fa-diagram-project"></i> Clusters</button>
+        ${mode === 'clusters' ? `
+          <button class="btn sm ${clusterMode === 'group' ? 'primary' : ''}" onclick="setImportsClusterMode('group')">by group</button>
+          <button class="btn sm ${clusterMode === 'tags' ? 'primary' : ''}" onclick="setImportsClusterMode('tags')">by shared tags</button>` : ''}
         <span style="flex:1"></span>
         <button class="btn sm ${group ? '' : 'primary'}" onclick="setImportsGroup('')">All groups</button>
         ${(g.groups || []).map(x => `<button class="btn sm ${group === x.group ? 'primary' : ''}"
@@ -2011,8 +2015,13 @@ async function viewImports(el) {
       </div>
       <div id="importsBody"></div>
     </div>`;
-  if (mode === 'clusters') renderImportsClusters(g, list);
+  if (mode === 'clusters') renderImportsClusters(g);
   else renderImportsChats(convs);
+}
+
+function setImportsClusterMode(m) {
+  State.importsClusterMode = m;
+  refreshView();
 }
 
 function setImportsGroup(g) {
@@ -2029,58 +2038,84 @@ function renderImportsChats(convs) {
   const box = $('#importsBody');
   if (!box) return;
   const rows = convs.conversations || [];
-  box.innerHTML = rows.map(c => `
+  box.innerHTML = rows.map((c, ci) => {
+    const turns = c.items;
+    const collapsed = turns.length > 4;
+    const visible = collapsed ? [...turns.slice(0, 2), ...turns.slice(-1)] : turns;
+    const hidden = collapsed ? turns.slice(2, -1) : [];
+    return `
     <div class="card" style="background:var(--bg);margin-bottom:12px">
       <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px">
         <strong style="font-size:13.5px">${esc(c.title.slice(0, 90))}</strong>
         <span class="tag">${esc(c.group)}</span>
         <span style="color:var(--text3);font-size:11px">
-          ${c.items.length} turn${c.items.length === 1 ? '' : 's'} · ${c.open ? c.open + ' open' : 'all answered'}</span>
+          ${turns.length} turn${turns.length === 1 ? '' : 's'} · ${c.open ? c.open + ' open' : 'all answered'}</span>
+        <span style="flex:1"></span>
+        ${c.open ? `<button class="btn sm" onclick="answerAllOpen(${c.items.filter(i => !i.answer).map(i => i.id).join(',')})">Answer all open (${c.open})</button>` : ''}
       </div>
-      ${c.items.map(it => `
-        <div class="chat-row ${it.answer ? '' : 'open'}">
-          <div class="chat-bubble q">${esc(it.question)}</div>
-          ${it.answer
-            ? `<div class="chat-bubble a">${esc(it.answer.slice(0, 1200))}${it.answer.length > 1200 ? '…' : ''}</div>
-               <div class="chat-meta">${(it.tags || []).slice(0, 4).map(tag => `<span class="tag" style="color:var(--teal)">${esc(tag)}</span>`).join('')}</div>`
-            : `<div class="chat-meta"><span class="tag" style="color:var(--orange)">awaiting answer</span>
-               <button class="btn sm primary" onclick="answerImported(${it.id})">Answer</button>
-               <button class="btn sm" onclick="openImportThread(${it.id})">Open thread</button></div>`}
-        </div>`).join('')}
-    </div>`).join('') || '<div class="empty">Nothing imported yet — use Ask → Import history.</div>';
+      ${visible.map(it => renderImportsTurn(it)).join('')}
+      ${hidden.length ? `<div id="convhidden-${ci}" style="display:none">
+        ${hidden.map(it => renderImportsTurn(it)).join('')}</div>
+        <button class="btn sm" onclick="toggleConvHidden(${ci}, this)">
+          Show ${hidden.length} earlier turn${hidden.length === 1 ? '' : 's'}</button>` : ''}
+    </div>`;
+  }).join('') || '<div class="empty">Nothing imported yet — use Ask → Import history.</div>';
 }
 
-function renderImportsClusters(g, list) {
+function renderImportsTurn(it) {
+  return `
+    <div class="chat-row ${it.answer ? '' : 'open'}">
+      <div class="chat-bubble q">${esc(it.question)}</div>
+      <div style="color:var(--text3);font-size:10.5px;margin:4px 0 0 auto;width:fit-content">
+        ${esc(it.asked_at || '')}</div>
+      ${it.answer
+        ? `<div class="chat-bubble a"><div class="answer">${renderAnswer(it.answer)}</div></div>
+           <div class="chat-meta">
+             <span class="tag" style="color:var(--text3)">imported — unverified</span>
+             ${(it.tags || []).slice(0, 4).map(tag => `<span class="tag" style="color:var(--teal)">${esc(tag)}</span>`).join('')}
+             <button class="btn sm" onclick="openImportThread(${it.id})">Open thread</button>
+           </div>`
+        : `<div class="chat-meta"><span class="tag" style="color:var(--orange)">awaiting answer</span>
+           <button class="btn sm primary" onclick="answerImported(${it.id})">Answer</button>
+           <button class="btn sm" onclick="openImportThread(${it.id})">Open thread</button></div>`}
+    </div>`;
+}
+
+function toggleConvHidden(ci, btn) {
+  const el = document.getElementById('convhidden-' + ci);
+  if (!el) return;
+  const open = el.style.display === 'none';
+  el.style.display = open ? '' : 'none';
+  btn.textContent = open ? 'Hide earlier turns' : btn.textContent;
+}
+
+async function answerAllOpen(...ids) {
+  if (!ids.length) return;
+  if (!confirm(`Answer ${ids.length} open question(s)? Each queues its own job.`)) return;
+  for (const id of ids) {
+    try {
+      await api('/api/ask', { method: 'POST',
+        body: JSON.stringify({ explanation_id: id }) });
+    } catch (e) { toast(e.message, 'err'); return; }
+  }
+  toast(`Queued ${ids.length} answer(s).`, 'ok');
+  startPolling();
+}
+
+function renderImportsClusters(g) {
   const box = $('#importsBody');
   if (!box) return;
+  const mode = State.importsClusterMode || 'group';
   box.innerHTML = `
     <div class="card" style="background:var(--bg);margin-bottom:0">
       <h3><i class="fas fa-diagram-project"></i> Import clusters
-        <span class="sub">grey hubs are content groups — click one to scope, click an item to open its thread</span></h3>
+        <span class="sub">${mode === 'tags' ? 'shared-vocabulary components — where groups ask the same thing' : 'grey hubs are content groups — click one to scope, click an item to open its thread'}</span></h3>
       <div id="importsGraph"></div>
       <div style="font-size:11px;color:var(--text3);margin-top:8px">
         Orange items await an answer · green are answered.</div>
-    </div>
-    <div class="card" style="background:var(--bg)">
-      <h3><i class="fas fa-list"></i> Items <span class="sub">${list.threads.length} shown</span></h3>
-      ${list.threads.map(t => `
-        <div class="source-item" style="margin-bottom:7px">
-          <div style="cursor:pointer" onclick="openImportThread(${t.id})">
-            <strong>${esc(t.question.slice(0, 110))}</strong></div>
-          <div style="color:var(--text3);font-size:11px;margin-top:4px">
-            <span class="tag">${esc(t.group || 'imported')}</span>
-            ${(t.tags || []).slice(0, 5).map(tag => `<span class="tag" style="color:var(--teal)">${esc(tag)}</span>`).join('')}
-            <span>${esc(t.status)} · ${fmtDate(t.created_at)}</span>
-          </div>
-          <div class="art-actions" style="margin-top:7px" onclick="event.stopPropagation()">
-            <button class="btn sm" onclick="openImportThread(${t.id})">Open thread</button>
-            ${t.status === 'imported' ? `<button class="btn sm primary" onclick="answerImported(${t.id})">Answer</button>` : ''}
-          </div>
-        </div>`).join('') || '<div class="empty">Nothing imported yet — use Ask → Import history.</div>'}
     </div>`;
   drawImportsGraph(g);
 }
-
 
 function openImportThread(id) {
   State.askOpen = id;

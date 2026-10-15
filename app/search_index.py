@@ -154,7 +154,8 @@ def reindex_all(db) -> dict:
         title, body = _artifact_text(a)
         _put(db, "artifact", a.id, a.investigation_id, title, body)
         counts["artifact"] += 1
-    for e in db.query(Explanation).filter(Explanation.status == "done").all():
+    for e in db.query(Explanation).filter(
+            Explanation.status.in_(("done", "imported"))).all():
         body = "\n".join(x for x in
                          [e.answer or "", e.critique or "", e.roadmap or ""]
                          if x)

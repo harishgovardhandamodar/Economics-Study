@@ -661,3 +661,45 @@ def test_import_conversations_group_filter(client):
         f"/api/ask/imports/conversations?group={g}").json()
     assert scoped["count"] >= 1
     assert all(c["group"] == g for c in scoped["conversations"])
+
+
+def test_imports_graph_tags_mode_clusters_shared_vocabulary(client):
+    import json as _json
+    _upload(client, _json.dumps([
+        {"query": "Federal reserve rate decision",
+         "answer": "The Committee held the policy rate."},
+        {"query": "Federal reserve balance sheet",
+         "answer": "Reserve balances drained."},
+        {"query": "Suez canal freight rates"},
+    ]).encode())
+    g = client.get("/api/ask/imports/graph?mode=tags").json()
+    assert g["mode"] == "tags"
+    assert g["counts"]["items"] == 3
+    # The two Fed questions share vocabulary and cluster; Suez stands alone.
+    multi = [c for c in g["clusters"] if len(c["member_ids"]) == 2]
+    assert len(multi) == 1
+    # The pair shares vocabulary (channel words like "reserve" pull in both
+    # endpoints); the label is whichever shared tag tops the count. Node labels
+    # carry the questions, so the pair itself is checkable.
+    labels = {n["explanation_id"]: n["label"] for n in g["nodes"]
+              if n["group"] == "import"}
+    pair_labels = sorted(labels[i] for i in multi[0]["member_ids"])
+    assert pair_labels == ["Federal reserve balance sheet",
+                           "Federal reserve rate decision"]
+    assert multi[0]["tags"] and all(
+        isinstance(t, str) for t in multi[0]["tags"])
+    solo = [c for c in g["clusters"] if len(c["member_ids"]) == 1]
+    assert len(solo) == 1
+    assert client.get("/api/ask/imports/graph?mode=bogus").status_code == 400
+    # Group mode still works alongside.
+    assert client.get("/api/ask/imports/graph").json()["mode"] == "group"
+
+
+def test_imported_rows_are_searchable_without_reindex(client):
+    import json as _json
+    _upload(client, _json.dumps(
+        [{"query": "Unobtanium reserve mechanics explained"}]).encode())
+    # No reindex call: the import hook indexed it on the way in.
+    r = client.get("/api/search/all?q=unobtanium").json()
+    assert r["results"]
+    assert r["results"][0]["doc_type"] == "explanation"
