@@ -586,3 +586,31 @@ def test_imports_graph_empty_estate(client):
     g = client.get("/api/ask/imports/graph").json()
     assert g["nodes"] == [] and g["edges"] == []
     assert g["counts"] == {"items": 0, "groups": 0}
+
+
+def test_import_accepts_files_over_the_old_cap(client, monkeypatch):
+    """The cap is 50MB: an 11MB export — rejected by the old 10MB check —
+    imports end to end."""
+    import json as _json
+    from app import ask as _ask
+    assert _ask.IMPORT_MAX_BYTES == 50_000_000
+    filler = "x" * 400
+    items = [{"query": f"Question number {i} about tariffs and {filler}",
+              "answer": f"Answer {i} also padded with {filler}"}
+             for i in range(12000)]
+    payload = _json.dumps(items).encode()
+    assert len(payload) > 10_000_000, len(payload)
+    r = _upload(client, payload).json()
+    assert r["created"] == 12000
+    assert r["skipped"] == 0
+    assert client.post("/api/ask/import",
+                       files={"file": ("big.json", payload)}).json()["created"] == 0
+
+
+def test_import_rejects_over_cap(client, monkeypatch):
+    from app import ask as _ask
+    monkeypatch.setattr(_ask, "IMPORT_MAX_BYTES", 100)
+    r = client.post("/api/ask/import",
+                    files={"file": ("big.json", b'{"queries": ["' + b"x" * 200 + b'"]}')})
+    assert r.status_code == 400
+    assert "cap" in r.json()["detail"]

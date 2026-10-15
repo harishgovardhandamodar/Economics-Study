@@ -34,6 +34,12 @@ from .models import Artifact, Explanation, Investigation
 ASK_ARCHIVE_TITLE = "Ask archive"
 WEB_SOURCES = 6
 
+# Upload cap for history imports. A Takeout archive of years of searches or
+# a long Qwen export easily clears 10MB; 50MB covers those while staying far
+# below anything that threatens the worker's memory (the file is parsed once,
+# streamed into rows, and only counts leave the request).
+IMPORT_MAX_BYTES = 50_000_000
+
 
 def get_archive(db) -> Investigation:
     """The hidden home of estate-wide answers. Get-or-create: two processes

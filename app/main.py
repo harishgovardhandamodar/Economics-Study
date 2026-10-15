@@ -2085,8 +2085,10 @@ async def ask_import(request: Request, db: Session = Depends(get_db)):
     if upload is None or not hasattr(upload, "read"):
         raise HTTPException(400, "multipart field 'file' is required")
     content = await upload.read()
-    if not content or len(content) > 10_000_000:
-        raise HTTPException(400, "empty file or over the 10MB cap")
+    if not content or len(content) > _ask.IMPORT_MAX_BYTES:
+        raise HTTPException(
+            400, "empty file or over the "
+            f"{_ask.IMPORT_MAX_BYTES // 1_000_000}MB cap")
     parsed = _ask.parse_history_file(content, getattr(upload, "filename", ""))
     if not parsed["items"] and parsed["skipped"]:
         return {"created": 0, "skipped": parsed["skipped"],
