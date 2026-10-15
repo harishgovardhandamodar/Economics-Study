@@ -10,11 +10,13 @@ services:
       # listens on 8304; override with HOST_PORT=xxxx.
       - "${HOST_PORT:-8310}:8304"
     environment:
-      # LLM inference routes to the fox-services gateway on the host.
-      # Inside the container localhost is the container itself, so the host
-      # gateway is reached via host.docker.internal (see extra_hosts).
-      - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8210/v1}
-      - LLM_FALLBACK_URL=${LLM_FALLBACK_URL:-}
+      # LLM inference is served from Axiom (2x RTX 5080) over LAN.
+      # Verified 2026-10-15: :8210 answers on 192.168.1.173 with qwen3.8:27b
+      # (+17 others); the tailnet paths (MagicDNS and 100.101.3.115) blackhole
+      # TCP, so LAN is primary. Fallback is this host's own gateway, reached
+      # via host.docker.internal (see extra_hosts).
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://192.168.1.173:8210/v1}
+      - LLM_FALLBACK_URL=${LLM_FALLBACK_URL:-http://host.docker.internal:8210/v1}
       - LLM_MODEL=${LLM_MODEL:-qwen3.8:27b}
       - LLM_FALLBACK_MODEL=${LLM_FALLBACK_MODEL:-qwen3.8:27b}
       - LLM_TIMEOUT_S=${LLM_TIMEOUT_S:-180}

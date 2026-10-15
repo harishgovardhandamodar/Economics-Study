@@ -1069,6 +1069,20 @@ def jobs():
     return jobqueue.queue_state()
 
 
+@app.get("/api/jobs/worker")
+def worker_state():
+    """Is the background worker alive? The queue depth tells you work is
+    waiting; this tells you anything is coming to get it. Split out because
+    'queued but nothing runs' has two completely different causes (dead
+    worker vs one giant synchronous job) and the fix differs."""
+    import threading
+    names = sorted(t.name for t in threading.enumerate())
+    return {"started": jobqueue._started,
+            "worker_enabled": jobqueue.WORKER_ENABLED,
+            "threads": names,
+            "worker_alive": any(n == "job-worker" for n in names)}
+
+
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: int, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
