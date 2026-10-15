@@ -352,9 +352,9 @@ Design decisions worth knowing:
 
 ## GUI tour
 
-Four top-level apps share the header switcher. **Mapper** is the
-per-investigation workbench below; **Executive brief**, **Design** and **Ask** are
-estate-wide and work with zero investigations selected.
+Five top-level apps share the header switcher. **Mapper** is the
+per-investigation workbench below; **Executive brief**, **Design**, **Ask**
+and **Imports** are estate-wide and work with zero investigations selected.
 
 **Investigations** (sidebar) — title, keywords, brief, an optional **driver**
 (the economic event being tracked), a shock statement, sources, and the domains
@@ -440,6 +440,11 @@ arrays, ChatGPT mapping exports, Markdown transcripts, or plain text — tagging
 and grouping every question from its content (domains, named actors, drivers),
 deduplicating, and leaving imports unanswered until asked — imported text is
 never evidence until then.
+
+**Imports** (top-level app) — every imported chat item as one clustered graph:
+content-group hubs plus member items, orange pending and green answered. Click
+an item to open its thread in Ask, click a hub to scope to the group; the item
+list below filters the same way, with per-item Answer buttons.
 
 PDFs attach where they belong: the dossier, each assessment, and the board all
 offer a PDF button next to their Markdown one. Rendered in-process with
