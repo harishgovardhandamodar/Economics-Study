@@ -1,0 +1,1895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Economics Cross-Domain Mapper</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.6/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+<style>
+:root{
+  --bg:#0d1117; --bg2:#161b22; --bg3:#21262d; --bg4:#2a3038; --border:#30363d;
+  --text:#f0f6fc; --text2:#8b949e; --text3:#6e7681;
+  --accent:#58a6ff; --green:#3fb950; --orange:#d29922; --red:#f85149;
+  --purple:#bc8cff; --teal:#56d4dd; --graph-bg:#0a0e14;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+html.light{
+  --bg:#f6f8fa; --bg2:#ffffff; --bg3:#eaeef2; --bg4:#dfe4ea; --border:#d0d7de;
+  --text:#1f2328; --text2:#656d76; --text3:#8c959f;
+  --accent:#0969da; --green:#1a7f37; --orange:#bd561d; --red:#cf222e;
+  --purple:#8250df; --teal:#096b7a; --graph-bg:#f0f2f5;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+button,input,select,textarea{font-family:inherit;font-size:inherit}
+button{cursor:pointer}
+
+/* ---------- layout ---------- */
+.layout{display:grid;grid-template-columns:330px 1fr;grid-template-rows:auto 1fr;
+  height:100vh;overflow:hidden}
+.header{grid-column:1/-1;padding:12px 20px;background:var(--bg2);
+  border-bottom:1px solid var(--border);display:flex;align-items:center;
+  justify-content:space-between;gap:16px}
+.header h1{font-size:17px;font-weight:600;display:flex;align-items:center;gap:10px}
+.header h1 i{color:var(--teal)}
+.header-right{display:flex;gap:10px;align-items:center}
+.sidebar{background:var(--bg2);border-right:1px solid var(--border);
+  overflow-y:auto;display:flex;flex-direction:column}
+.main{overflow-y:auto;display:flex;flex-direction:column;min-width:0}
+
+/* ---------- header bits ---------- */
+.pill{padding:3px 9px;border-radius:11px;font-size:11px;font-weight:600;
+  border:1px solid var(--border);background:var(--bg3);white-space:nowrap}
+.pill.ok{color:var(--green);border-color:var(--green)}
+.pill.warn{color:var(--orange);border-color:var(--orange)}
+.pill.err{color:var(--red);border-color:var(--red)}
+.pill.busy{color:var(--accent);border-color:var(--accent)}
+.icon-btn{background:transparent;border:1px solid var(--border);color:var(--text2);
+  border-radius:6px;padding:5px 9px;transition:.12s}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.icon-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* ---------- sidebar ---------- */
+.side-section{padding:14px 16px;border-bottom:1px solid var(--border)}
+.side-title{font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--text3);margin-bottom:10px;display:flex;justify-content:space-between;
+  align-items:center}
+.side-title button{background:none;border:none;color:var(--accent);font-size:15px;
+  line-height:1;padding:0 2px}
+.inv-list{display:flex;flex-direction:column;gap:3px}
+.inv-item{padding:9px 10px;border-radius:7px;cursor:pointer;border:1px solid transparent;
+  transition:.12s}
+.inv-item:hover{background:var(--bg3)}
+.inv-item.active{background:var(--bg3);border-color:var(--accent)}
+.inv-item-title{font-weight:600;font-size:13px;margin-bottom:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inv-item-meta{font-size:11px;color:var(--text3);display:flex;gap:8px;flex-wrap:wrap}
+.inv-item-domains{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+.empty{color:var(--text3);font-size:12px;padding:12px 0;text-align:center;
+  font-style:italic}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;gap:2px;padding:0 16px;background:var(--bg2);
+  border-bottom:1px solid var(--border);overflow-x:auto;flex:none}
+.tab{padding:11px 15px;font-size:13px;color:var(--text2);cursor:pointer;
+  border-bottom:2px solid transparent;white-space:nowrap;display:flex;
+  align-items:center;gap:7px;transition:.12s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab .count{background:var(--bg4);color:var(--text2);border-radius:9px;
+  padding:1px 6px;font-size:10px;font-weight:700}
+.tab.active .count{background:var(--accent);color:#fff}
+.view{padding:20px;flex:1;min-height:0}
+.view.graph-view{display:flex;flex-direction:column;padding:0;position:relative}
+
+/* ---------- controls ---------- */
+.btn{background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  padding:7px 13px;border-radius:7px;font-weight:500;transition:.12s;
+  display:inline-flex;align-items:center;gap:7px;font-size:13px}
+.btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover:not(:disabled){filter:brightness(1.12);color:#fff}
+.btn.danger:hover:not(:disabled){border-color:var(--red);color:var(--red)}
+.btn.sm{padding:4px 9px;font-size:12px}
+input[type=text],input[type=number],select,textarea{background:var(--bg);
+  border:1px solid var(--border);color:var(--text);padding:8px 10px;
+  border-radius:7px;width:100%}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+textarea{resize:vertical;min-height:64px;font-family:inherit}
+label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:500}
+.field{margin-bottom:13px}
+.row{display:flex;gap:10px}
+.row>*{flex:1;min-width:0}
+
+/* ---------- cards ---------- */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+  padding:16px;margin-bottom:14px}
+.card h3{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;
+  align-items:center;gap:9px}
+.card h3 .sub{font-size:11px;color:var(--text3);font-weight:400}
+.grid{display:grid;gap:14px}
+.grid.c2{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.grid.c3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.grid.c4{grid-template-columns:repeat(auto-fit,minmax(165px,1fr))}
+
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+  padding:14px}
+.stat .n{font-size:26px;font-weight:700;line-height:1.1}
+.stat .l{font-size:11px;color:var(--text3);margin-top:4px;text-transform:uppercase;
+  letter-spacing:.05em}
+.stat.clickable{cursor:pointer;transition:.12s}
+.stat.clickable:hover{border-color:var(--accent)}
+
+.domain-card{border:1px solid var(--border);border-radius:9px;padding:12px;
+  background:var(--bg);position:relative;overflow:hidden}
+.domain-card.empty-domain{border-style:dashed;opacity:.78}
+.domain-bar{height:4px;border-radius:2px;margin-top:9px;background:var(--bg3);
+  overflow:hidden}
+.domain-bar i{display:block;height:100%;border-radius:2px}
+.domain-name{font-weight:600;font-size:12px;display:flex;align-items:center;gap:7px}
+.domain-role{font-size:10px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:.05em;margin-top:2px}
+.domain-top{font-size:11px;color:var(--text2);margin-top:8px;line-height:1.5;
+  display:flex;flex-direction:column;gap:4px}
+.domain-top a{color:var(--text2);text-decoration:none;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;display:flex;gap:5px;align-items:center}
+.domain-top a:hover{color:var(--accent)}
+
+/* ---------- artifact / review ---------- */
+.group{border:1px solid var(--border);border-radius:9px;margin-bottom:9px;
+  overflow:hidden;background:var(--bg2)}
+.group-head{padding:10px 14px;display:flex;align-items:center;gap:10px;
+  cursor:pointer;user-select:none;background:var(--bg3)}
+.group-head:hover{background:var(--bg4)}
+.group-head .caret{transition:transform .15s;color:var(--text3);font-size:11px}
+.group.collapsed .caret{transform:rotate(-90deg)}
+.group.collapsed .group-body{display:none}
+.group-body{padding:11px;display:flex;flex-direction:column;gap:9px}
+.artifact{border:1px solid var(--border);border-radius:9px;padding:12px;
+  background:var(--bg);transition:.12s}
+.artifact:hover{border-color:var(--text3)}
+.artifact.rejected{opacity:.55}
+.artifact.drift{border-left:3px solid var(--orange)}
+.art-head{display:flex;justify-content:space-between;gap:12px;
+  align-items:flex-start;margin-bottom:7px}
+.art-title{font-weight:600;font-size:13px;line-height:1.4}
+.art-desc{color:var(--text2);font-size:12px;line-height:1.6;margin-bottom:9px}
+.art-meta{display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:11px;
+  color:var(--text3);margin-bottom:9px}
+.art-actions{display:flex;gap:6px;flex-wrap:wrap}
+.tag{padding:2px 7px;border-radius:5px;background:var(--bg3);color:var(--text2);
+  font-size:10px;font-weight:600;border:1px solid var(--border)}
+.tag.dom{border-color:transparent;color:#06111f}
+.tag.up{color:var(--green);border-color:var(--green)}
+.tag.down{color:var(--red);border-color:var(--red)}
+.tag.flat{color:var(--text3)}
+.relevance-ring{width:34px;height:34px;border-radius:50%;flex:none;
+  display:grid;place-items:center;font-size:10px;font-weight:700;
+  border:2px solid var(--accent);color:var(--accent)}
+
+/* ---------- graph ---------- */
+#graph{flex:1;min-height:0;background:var(--graph-bg);border-radius:0}
+.legend{position:absolute;left:14px;bottom:14px;background:var(--bg2);
+  border:1px solid var(--border);border-radius:9px;padding:12px;max-width:250px;
+  font-size:11px;z-index:10;box-shadow:0 6px 22px rgba(0,0,0,.4)}
+.legend h4{font-size:10px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--text3);margin:9px 0 5px}
+.legend h4:first-child{margin-top:0}
+.legend .row{display:flex;align-items:center;gap:7px;padding:2px 0;
+  cursor:pointer;border-radius:4px}
+.legend .row:hover{background:var(--bg3)}
+.legend .row.off{opacity:.35}
+.graph-toolbar{position:absolute;right:14px;top:14px;z-index:10;display:flex;
+  gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:60%}
+.hint{position:absolute;left:14px;top:14px;z-index:10;background:var(--bg2);
+  border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:11px;
+  color:var(--text2);box-shadow:0 4px 16px rgba(0,0,0,.35)}
+
+/* ---------- explainer ---------- */
+.answer{font-size:14px;line-height:1.75}
+.answer h1,.answer h2,.answer h3{margin:20px 0 10px;line-height:1.35}
+.answer h1{font-size:19px}.answer h2{font-size:16px;
+  border-bottom:1px solid var(--border);padding-bottom:6px}
+.answer h3{font-size:14px}
+.answer p{margin-bottom:11px}
+.answer ul,.answer ol{margin:0 0 11px 22px}
+.answer li{margin-bottom:5px}
+.answer code{background:var(--bg3);padding:2px 5px;border-radius:4px;
+  font-family:var(--mono);font-size:12px}
+.answer pre{background:var(--bg);border:1px solid var(--border);padding:12px;
+  border-radius:8px;overflow-x:auto;margin-bottom:11px}
+.answer blockquote{border-left:3px solid var(--accent);padding-left:13px;
+  margin:0 0 11px;color:var(--text2)}
+.answer a{color:var(--accent)}
+.cite{background:var(--bg4);border-radius:4px;padding:1px 5px;font-size:11px;
+  font-weight:700;color:var(--accent);cursor:pointer;vertical-align:super}
+.cite.dropped{color:var(--red);background:rgba(248,81,73,.15);
+  text-decoration:line-through;cursor:help}
+.meta-strip{display:flex;gap:9px;flex-wrap:wrap;align-items:center;
+  font-size:11px;color:var(--text3);padding-bottom:12px;
+  border-bottom:1px solid var(--border);margin-bottom:14px}
+.conf-bar{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;
+  width:78px;display:inline-block;vertical-align:middle}
+.conf-bar i{display:block;height:100%}
+.sources{display:flex;flex-direction:column;gap:7px}
+.source-item{border:1px solid var(--border);border-radius:8px;padding:10px;
+  background:var(--bg);font-size:12px}
+.source-quote{border-left:3px solid var(--green);padding-left:10px;
+  margin-top:6px;font-style:italic;color:var(--text2)}
+.source-item.dropped{border-left:3px solid var(--red);opacity:.72}
+
+/* ---------- gaps ---------- */
+.gap{border:1px solid var(--border);border-radius:9px;padding:13px;
+  background:var(--bg2);margin-bottom:9px}
+.gap.priority{border-left:3px solid var(--orange)}
+.gap-why{color:var(--text2);font-size:12px;margin:7px 0 10px;line-height:1.6}
+.gap-query{font-family:var(--mono);font-size:11px;background:var(--bg);
+  border:1px solid var(--border);border-radius:6px;padding:7px;
+  color:var(--text2);margin-bottom:10px}
+
+/* ---------- console / timeline ---------- */
+.log{font-family:var(--mono);font-size:11.5px;line-height:1.65;max-height:520px;
+  overflow-y:auto;background:var(--bg);border:1px solid var(--border);
+  border-radius:9px;padding:12px}
+.log-line{display:flex;gap:11px;padding:1px 0}
+.log-stage{flex:none;width:62px;font-weight:700;font-size:10px;
+  text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.log-stage.plan{color:var(--accent)}
+.log-stage.search{color:var(--teal)}
+.log-stage.analyze{color:var(--purple)}
+.log-stage.map{color:var(--green)}
+.log-stage.summary{color:var(--orange)}
+.log-stage.explainer.retrieve,.log-stage.grounding.check{color:var(--accent)}
+.log-msg{flex:1;color:var(--text2);word-break:break-word}
+.log-line .dim{color:var(--text3)}
+
+.chain{font-family:var(--mono);font-size:11.5px}
+.chain-event{border:1px solid var(--border);border-radius:8px;padding:9px 11px;
+  margin-bottom:6px;background:var(--bg2)}
+.chain-event.flag{border-left:3px solid var(--orange)}
+.chain-event.deny{border-left:3px solid var(--red)}
+.chain-event .top{display:flex;gap:11px;align-items:center;flex-wrap:wrap;
+  margin-bottom:5px}
+.chain-event .seq{color:var(--text3);font-weight:700;min-width:34px}
+.chain-event .kind{color:var(--accent);font-weight:700}
+.chain-event .actor{color:var(--text2)}
+.chain-event .hash{color:var(--text3);font-size:10px;margin-left:auto}
+.chain-event .data{color:var(--text2);font-size:11px;background:var(--bg);
+  padding:6px 8px;border-radius:5px;margin-top:5px;white-space:pre-wrap;
+  word-break:break-all}
+
+table.tbl{width:100%;border-collapse:collapse;font-size:12px}
+table.tbl th{text-align:left;padding:8px 10px;color:var(--text3);
+  border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;
+  letter-spacing:.05em;font-weight:600}
+table.tbl td{padding:8px 10px;border-bottom:1px solid var(--border);
+  vertical-align:top}
+table.tbl tr:hover td{background:var(--bg2)}
+
+/* ---------- modal ---------- */
+.modal-back{position:fixed;inset:0;background:rgba(1,4,9,.78);z-index:100;
+  display:none;align-items:center;justify-content:center;padding:24px;
+  overflow-y:auto}
+.modal-back.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:13px;
+  max-width:840px;width:100%;max-height:88vh;overflow-y:auto;
+  box-shadow:0 24px 70px rgba(0,0,0,.6)}
+.modal-head{padding:16px 20px;border-bottom:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center;
+  position:sticky;top:0;background:var(--bg2);z-index:2}
+.modal-head h2{font-size:15px;font-weight:600}
+.modal-body{padding:20px}
+.modal-foot{padding:14px 20px;border-top:1px solid var(--border);
+  display:flex;justify-content:flex-end;gap:9px}
+
+.banner{padding:11px 14px;border-radius:9px;margin-bottom:13px;font-size:12.5px;
+  display:flex;gap:9px;align-items:flex-start;line-height:1.55}
+.banner.warn{background:rgba(210,153,34,.12);border:1px solid var(--orange);
+  color:var(--orange)}
+.banner.err{background:rgba(248,81,73,.12);border:1px solid var(--red);
+  color:var(--red)}
+.banner.info{background:rgba(88,166,255,.1);border:1px solid var(--accent);
+  color:var(--accent)}
+.banner.ok{background:rgba(63,185,80,.12);border:1px solid var(--green);
+  color:var(--green)}
+
+.spin{animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--bg3);
+  border:1px solid var(--border);border-radius:9px;padding:12px 17px;
+  font-size:13px;z-index:200;box-shadow:0 8px 26px rgba(0,0,0,.45);
+  max-width:380px;animation:slide .2s ease}
+@keyframes slide{from{transform:translateX(120%);opacity:0}}
+.toast.err{border-color:var(--red);color:var(--red)}
+.toast.ok{border-color:var(--green)}
+
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+</style>
+</head>
+<body>
+<div class="layout">
+  <!-- ============ HEADER ============ -->
+  <div class="header">
+    <h1><i class="fas fa-chart-network"></i> Economics Cross-Domain Mapper</h1>
+    <div class="header-right">
+      <span id="llmPill" class="pill">gateway…</span>
+      <span id="queuePill" class="pill">queue…</span>
+      <span id="integrityPill" class="pill">ledger…</span>
+      <button class="icon-btn" id="taxBtn" title="Domain taxonomy">
+        <i class="fas fa-diagram-project"></i></button>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme">
+        <i class="fas fa-adjust"></i></button>
+    </div>
+  </div>
+
+  <!-- ============ SIDEBAR ============ -->
+  <div class="sidebar">
+    <div class="side-section">
+      <div class="side-title">
+        <span>Investigations</span>
+        <span style="display:flex;gap:6px">
+          <button onclick="showNewInvestigation()" title="New investigation">
+            <i class="fas fa-plus"></i></button>
+          <button onclick="toggleHidden()" title="Show hidden" id="hiddenBtn"
+                  style="display:none"><i class="fas fa-eye-slash"></i></button>
+        </span>
+      </div>
+      <div class="inv-list" id="invList"></div>
+    </div>
+    <div class="side-section" id="invActions" style="display:none">
+      <div class="side-title">Actions</div>
+      <button class="btn primary" style="width:100%;justify-content:center"
+              onclick="startRun()"><i class="fas fa-play"></i> Collect</button>
+      <div style="height:7px"></div>
+      <button class="btn" style="width:100%;justify-content:center"
+              onclick="switchView('gaps')"><i class="fas fa-vial"></i> Find open gaps</button>
+      <div style="height:7px"></div>
+      <button class="btn" style="width:100%;justify-content:center"
+              onclick="showSummaryModal()"><i class="fas fa-file-lines"></i> Executive summary</button>
+      <div style="height:7px"></div>
+      <button class="btn" style="width:100%;justify-content:center"
+              onclick="downloadDossier()"><i class="fas fa-file-arrow-down"></i> Full report</button>
+      <div style="height:7px"></div>
+      <button class="btn" style="width:100%;justify-content:center"
+              onclick="showScheduleModal()"><i class="fas fa-clock"></i> Schedule</button>
+      <div style="height:14px"></div>
+      <button class="btn danger" style="width:100%;justify-content:center"
+              onclick="deleteInvestigation()"><i class="fas fa-trash"></i> Delete</button>
+    </div>
+  </div>
+
+  <!-- ============ MAIN ============ -->
+  <div class="main">
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-view="graph" onclick="switchView('graph')">
+        <i class="fas fa-project-diagram"></i> Knowledge graph</div>
+      <div class="tab" data-view="artifacts" onclick="switchView('artifacts')">
+        <i class="fas fa-box-archive"></i> Artifacts</div>
+      <div class="tab" data-view="review" onclick="switchView('review')">
+        <i class="fas fa-list-check"></i> Review <span class="count" id="pendingCount">0</span></div>
+      <div class="tab" data-view="gaps" onclick="switchView('gaps')">
+        <i class="fas fa-vial"></i> Research gaps <span class="count" id="gapCount">0</span></div>
+      <div class="tab" data-view="explainer" onclick="switchView('explainer')">
+        <i class="fas fa-lightbulb"></i> Explainer</div>
+      <div class="tab" data-view="assess" onclick="switchView('assess')">
+        <i class="fas fa-scale-balanced"></i> Assessment</div>
+      <div class="tab" data-view="board" onclick="switchView('board')">
+        <i class="fas fa-building-columns"></i> Board</div>
+      <div class="tab" data-view="manager" onclick="switchView('manager')">
+        <i class="fas fa-diagram-project"></i> Manager</div>
+      <div class="tab" data-view="summary" onclick="switchView('summary')">
+        <i class="fas fa-chart-pie"></i> Summary</div>
+      <div class="tab" data-view="console" onclick="switchView('console')">
+        <i class="fas fa-terminal"></i> Agent console</div>
+      <div class="tab" data-view="timeline" onclick="switchView('timeline')">
+        <i class="fas fa-timeline"></i> Timeline</div>
+      <div class="tab" data-view="audit" onclick="switchView('audit')">
+        <i class="fas fa-shield-halved"></i> Audit ledger <span class="count" id="auditCount">0</span></div>
+    </div>
+    <div class="view graph-view" id="view"></div>
+  </div>
+</div>
+
+<div class="modal-back" id="modalBack">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">Title</h2>
+      <button class="icon-btn" onclick="closeModal()"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<script>
+// ==========================================================================
+// Session key. One browser sitting = one ledger spine, so the audit view can
+// prove the order runs happened in across the whole session.
+// ==========================================================================
+if (!localStorage.getItem('econ-session')) {
+  localStorage.setItem('econ-session', 'sess-' + Math.random().toString(36).slice(2, 12));
+}
+const SESSION = localStorage.getItem('econ-session');
+
+if (localStorage.getItem('econ-theme') === 'light') document.documentElement.classList.add('light');
+
+const State = {
+  investigations: [], invId: null, view: 'graph', graph: null, network: null,
+  taxonomies: null, showHidden: false, timer: null, domains: new Set(),
+};
+
+// ==========================================================================
+// API
+// ==========================================================================
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Econ-Session': SESSION,
+      'X-Econ-Client': 'tui',
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('json') ? res.json() : res.text();
+}
+
+function toast(msg, kind = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.innerHTML = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtDate = (v) => { if (!v) return '—';
+  const d = new Date(v); return isNaN(d) ? String(v) : d.toLocaleDateString(); };
+
+// ==========================================================================
+// Taxonomy (loaded once; the whole UI colours itself from it)
+// ==========================================================================
+const domColor = (id) => (State.taxonomies?.domains.find(d => d.id === id) || {}).color || '#6e7681';
+const domLabel = (id) => (State.taxonomies?.domains.find(d => d.id === id) || {}).label || id || 'Unclassified';
+
+async function loadTaxonomies() {
+  State.taxonomies = await api('/api/domains');
+  return State.taxonomies;
+}
+
+// ==========================================================================
+// Investigations
+// ==========================================================================
+async function loadInvestigations() {
+  const url = '/api/investigations' + (State.showHidden ? '?include_hidden=true' : '');
+  const data = await api(url);
+  State.investigations = data.investigations;
+  if (State.invId && !State.investigations.some(i => i.id === State.invId)) State.invId = null;
+  if (!State.invId && State.investigations.length) State.invId = State.investigations[0].id;
+  renderSidebar();
+  $('#hiddenBtn').style.display = State.showHidden ? '' : 'none';
+  $('#hiddenBtn').classList.toggle('active', State.showHidden);
+}
+
+function toggleHidden() { State.showHidden = !State.showHidden; loadInvestigations(); }
+
+function renderSidebar() {
+  const el = $('#invList');
+  const visible = State.investigations.filter(i => !i.hidden);
+  if (!visible.length) {
+    el.innerHTML = `<div class="empty">${State.showHidden ? 'Nothing hidden or shown.' : 'No investigations yet.<br>Create one to start mapping.'}</div>`;
+  } else {
+    el.innerHTML = visible.map(i => {
+      const dots = (i.domains || []).slice(0, 8)
+        .map(d => `<span class="dot" style="background:${domColor(d)}" title="${esc(domLabel(d))}"></span>`).join('');
+      return `<div class="inv-item ${i.id === State.invId ? 'active' : ''}" onclick="selectInvestigation(${i.id})">
+        <div class="inv-item-title">${i.hidden ? '<i class="fas fa-eye-slash"></i> ' : ''}${esc(i.title)}</div>
+        <div class="inv-item-meta">
+          <span>${i.counts.artifacts} artifacts</span>
+          <span>${i.counts.relationships} edges</span>
+          ${i.counts.pending ? `<span style="color:var(--orange)">${i.counts.pending} to review</span>` : ''}
+          ${i.driver ? '<span style="color:var(--purple)"><i class="fas fa-bolt"></i> driver</span>' : ''}
+        </div>
+        ${dots ? `<div class="inv-item-domains">${dots}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  $('#invActions').style.display = State.invId ? '' : 'none';
+}
+
+async function selectInvestigation(id) {
+  State.invId = id;
+  State.domains = new Set();
+  renderSidebar();
+  await refreshView();
+}
+
+function currentInv() { return State.investigations.find(i => i.id === State.invId); }
+
+function showNewInvestigation() {
+  const T = State.taxonomies;
+  const domains = T.domains.map(d =>
+    `<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;
+      padding:5px 0;cursor:pointer;color:var(--text)">
+      <input type="checkbox" value="${d.id}" style="width:auto;margin:0">
+      <span class="dot" style="background:${d.color}"></span>
+      <span style="flex:1">${d.label}</span>
+      ${d.hub ? '<span class="tag" style="color:var(--purple)">hub</span>' : ''}
+    </label>`).join('');
+  const drivers = Object.entries(T.drivers).map(([k, v]) =>
+    `<option value="${k}">${v.label}</option>`).join('');
+  const sources = ['rss', 'arxiv', 'web'].map(s =>
+    `<label style="display:flex;gap:8px;align-items:center;margin:0;cursor:pointer">
+      <input type="checkbox" value="${s}" ${s !== 'arxiv' ? 'checked' : ''}
+        style="width:auto;margin:0"><span style="color:var(--text)">${s}</span></label>`).join('');
+
+  openModal('New investigation', `
+    <div class="field"><label>Title</label>
+      <input type="text" id="nTitle" placeholder="Rate path and stablecoin float"></div>
+    <div class="field"><label>Keywords (comma separated)</label>
+      <input type="text" id="nKeywords" placeholder="rate decision, stablecoin reserves, T-bill auction"></div>
+    <div class="field"><label>Brief — what should this map answer?</label>
+      <textarea id="nDesc" placeholder="Track how policy-rate decisions transmit into stablecoin reserve composition and sovereign issuance costs."></textarea></div>
+    <div class="row">
+      <div class="field"><label>Driver (optional — the event being tracked)</label>
+        <select id="nDriver"><option value="">— topic, not an event —</option>${drivers}</select></div>
+      <div class="field"><label>Sources</label><div style="display:flex;gap:14px;padding-top:6px">${sources}</div></div>
+    </div>
+    <div class="field"><label>Shock statement (optional, with a driver)</label>
+      <input type="text" id="nShock" placeholder="A 50bp hike delivered as a surprise at the December meeting."></div>
+    <div class="field"><label>Domains of interest</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">${domains}</div></div>
+    <div class="banner info"><i class="fas fa-info"></i>
+      <span>The agent classifies every artifact into one of these domains. Domains you
+      leave unchecked are still collected, they are just not used as the brief's focus.</span></div>
+  `, `
+    <button class="btn" onclick="closeModal()">Cancel</button>
+    <button class="btn primary" onclick="createInvestigation()"><i class="fas fa-plus"></i> Create</button>`);
+}
+
+async function createInvestigation() {
+  const title = $('#nTitle').value.trim();
+  if (!title) return toast('A title is required.', 'err');
+  const body = {
+    title,
+    keywords: $('#nKeywords').value.trim(),
+    description: $('#nDesc').value.trim(),
+    driver: $('#nDriver').value || null,
+    shock: $('#nShock').value.trim() || null,
+    sources: $$('#modalBody input[type=checkbox]').filter(c =>
+      c.closest('label')?.textContent?.trim() === c.value).map(c => c.value).join(','),
+    preferred_domains: $$('#modalBody input[type=checkbox]')
+      .filter(c => State.taxonomies.domains.some(d => d.id === c.value))
+      .map(c => c.value).join(','),
+  };
+  try {
+    const inv = await api('/api/investigations', { method: 'POST', body: JSON.stringify(body) });
+    closeModal();
+    State.invId = inv.id;
+    await loadInvestigations();
+    toast('Investigation created.', 'ok');
+    switchView('graph');
+  } catch (e) { toast('Could not create: ' + e.message, 'err'); }
+}
+
+async function deleteInvestigation() {
+  const inv = currentInv();
+  if (!inv) return;
+  if (!confirm(`Delete "${inv.title}" and everything collected under it?\n\nRuns, artifacts, edges and answers all go.`)) return;
+  try {
+    await api('/api/investigations/' + inv.id, { method: 'DELETE' });
+    State.invId = null;
+    await loadInvestigations();
+    await refreshView();
+    toast('Deleted.', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// ==========================================================================
+// Views
+// ==========================================================================
+function switchView(view) {
+  State.view = view;
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
+  refreshView();
+}
+
+async function refreshView() {
+  const el = $('#view');
+  if (!State.invId) {
+    el.className = 'view';
+    el.innerHTML = `<div class="empty" style="padding-top:70px">
+      <i class="fas fa-chart-network" style="font-size:38px;opacity:.35;display:block;margin-bottom:14px"></i>
+      Select an investigation, or create one to start mapping.</div>`;
+    return;
+  }
+  const fns = {
+    graph: viewGraph, artifacts: viewArtifacts, review: viewReview,
+    gaps: viewGaps, explainer: viewExplainer, assess: viewAssess,
+    board: viewBoard, manager: viewManager,
+    summary: viewSummary,
+    console: viewConsole, timeline: viewTimeline, audit: viewAudit,
+  };
+  await (fns[State.view] || viewGraph)(el);
+}
+
+// ---------- knowledge graph ----------
+async function viewGraph(el) {
+  el.className = 'view graph-view';
+  el.innerHTML = `<div id="graph"></div>
+    <div class="graph-toolbar" id="graphToolbar"></div>
+    <div class="legend" id="legend"></div>`;
+  const data = await api(`/api/investigations/${State.invId}/graph`);
+  State.graph = data;
+  drawGraph(data);
+  renderLegend();
+}
+
+function drawGraph(data) {
+  const nodes = new vis.DataSet(data.nodes.map(n => ({ ...n, shape: 'dot' })));
+  const edges = new vis.DataSet(data.edges.map(e => ({ ...e, arrows: 'to' })));
+  const container = $('#graph');
+  State.network?.destroy();
+
+  const physics = {
+    solver: 'forceAtlas2Based',
+    forceAtlas2Based: { gravitationalConstant: -70, centralGravity: 0.008,
+      springLength: 175, springConstant: 0.045, damping: 0.5 },
+    stabilization: { iterations: 220 },
+  };
+
+  State.network = new vis.Network(container, { nodes, edges }, {
+    physics,
+    interaction: { hover: true, tooltipDelay: 110, navigationButtons: false,
+      keyboard: false },
+    nodes: { borderWidth: 2, font: { size: 11, color: getComputedStyle(document.body).color } },
+    edges: { smooth: { type: 'continuous' }, width: 1.4, font: { size: 9, strokeWidth: 3 } },
+  });
+
+  State.network.on('doubleClick', (params) => {
+    const n = nodes.get(params.nodes[0]);
+    if (n?.id) showArtifact(n.id);
+  });
+  State.network.on('click', (params) => {
+    const n = nodes.get(params.nodes[0]);
+    if (n?.id) highlightConnections(n.id);
+  });
+  // Declutter: the edge label is unreadable until you are close to the node.
+  edges.forEach((e) => nodes.get(e.from) && null);
+  applyGraphFilters();
+}
+
+function renderLegend() {
+  const L = State.graph?.legend;
+  if (!L) return;
+  const domains = L.domains.map(d =>
+    `<div class="row ${State.domains.has(d.id) ? 'off' : ''}" data-dom="${d.id}" onclick="toggleDomain('${d.id}')">
+      <span class="dot" style="background:${d.color}"></span>
+      <span style="flex:1">${d.label}</span>
+      <span style="color:var(--text3)">${d.id === 'macro' ? '' : ''}</span>
+    </div>`).join('');
+  const rels = Object.entries(L.relationships).map(([k, v]) =>
+    `<div class="row" style="cursor:default">
+      <span style="width:16px;height:2px;background:${v.color};display:inline-block"></span>
+      <span>${v.label}</span></div>`).join('');
+  $('#legend').innerHTML =
+    `<h4>Domains <span style="float:right;color:var(--text3);cursor:pointer" onclick="document.getElementById('legend').classList.toggle('collapsed')">▾</span></h4>${domains}
+     <h4>Edges</h4>${rels}`;
+}
+
+function toggleDomain(id) {
+  State.domains.has(id) ? State.domains.delete(id) : State.domains.add(id);
+  applyGraphFilters();
+  renderLegend();
+}
+
+function applyGraphFilters() {
+  if (!State.network || !State.graph) return;
+  const nodes = State.network.body.data.nodes;
+  const all = new Map(State.graph.nodes.map(n => [n.id, n]));
+  const keep = new Set(
+    State.graph.nodes.filter(n => !State.domains.size ||
+      (n.domain && State.domains.has(n.domain))).map(n => n.id));
+  nodes.update([...all.values()].map(n => ({
+    id: n.id, hidden: !keep.has(n.id),
+  })));
+  $('#graphToolbar').innerHTML =
+    `<span class="pill">${keep.size}/${all.size} nodes</span>
+     ${State.domains.size ? '<button class="icon-btn" onclick="State.domains.clear();applyGraphFilters();renderLegend()">clear filters</button>' : ''}`;
+  $('#graphStats').textContent = `${keep.size}/${all.size} nodes`;
+}
+
+// ---------- artifacts ----------
+async function viewArtifacts(el) {
+  el.className = 'view';
+  const rows = await api(`/api/investigations/${State.invId}/artifacts`);
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-box-archive"></i> Collected artifacts
+        <span class="sub">${rows.count} items — the <em>collected</em> view, not the triage view</span></h3>
+      <div class="row" style="margin-bottom:12px">
+        <input type="text" id="artSearch" placeholder="Filter by title, description or tag…" oninput="filterArtifacts()">
+        <select id="fType" onchange="filterArtifacts()"><option value="">All types</option>
+          ${Object.entries(State.taxonomies.artifact_types).map(([k, v]) =>
+            `<option value="${k}">${v.label}</option>`).join('')}</select>
+        <select id="fDomain" onchange="filterArtifacts()"><option value="">All domains</option>
+          ${State.taxonomies.domains.map(d => `<option value="${d.id}">${d.label}</option>`).join('')}</select>
+        <select id="fReview" onchange="filterArtifacts()"><option value="">Any state</option>
+          <option value="pending">Pending</option><option value="accepted">Accepted</option>
+          <option value="rejected">Rejected</option></select>
+      </div>
+      <div id="artRows">${rows.artifacts.map(a => artifactCard(a, false)).join('') ||
+        '<div class="empty">Nothing collected yet. Press Collect.</div>'}</div>
+    </div>`;
+  $('#artSearch').dataset.rows = rows.artifacts.length;
+}
+
+function filterArtifacts() {
+  const q = ($('#artSearch')?.value || '').toLowerCase();
+  const type = $('#fType')?.value, dom = $('#fDomain')?.value, rev = $('#fReview')?.value;
+  const rows = (State.lastArtifacts || []);
+  const hit = rows.filter(a =>
+    (!q || `${a.title} ${a.description} ${a.tags}`.toLowerCase().includes(q)) &&
+    (!type || a.artifact_type === type) &&
+    (!dom || a.domain === dom) &&
+    (!rev || a.review === rev));
+  $('#artRows').innerHTML = hit.map(a => artifactCard(a, false)).join('') ||
+    '<div class="empty">Nothing matches those filters.</div>';
+}
+
+async function reloadArtifacts() {
+  if (State.view === 'artifacts' || State.view === 'review') await refreshView();
+  await loadInvestigations();
+  updateBadges();
+}
+
+// ---------- review ----------
+async function viewReview(el) {
+  el.className = 'view';
+  const data = await api(`/api/investigations/${State.invId}/artifacts`);
+  State.lastArtifacts = data.artifacts;
+  const groups = [
+    { key: 'pending', label: 'Needs review', open: true },
+    { key: 'drift', label: 'Drift flagged', open: true, filter: a => a.drift },
+    { key: 'accepted', label: 'Accepted', open: false },
+    { key: 'rejected', label: 'Rejected', open: false },
+  ];
+  const assigned = new Set();
+  let html = '';
+  for (const g of groups) {
+    const items = data.artifacts.filter(g.filter || (a => a.review === g.key));
+    items.forEach(a => assigned.add(a.id));
+    if (!items.length) continue;
+    html += `<div class="group ${g.open ? '' : 'collapsed'}" data-group="${g.key}">
+      <div class="group-head" onclick="this.parentElement.classList.toggle('collapsed')">
+        <i class="fas fa-chevron-down caret"></i>
+        <strong>${g.label}</strong>
+        <span class="pill">${items.length}</span>
+        <span style="margin-left:auto"><button class="icon-btn sm"
+          onclick="event.stopPropagation();toggleAllGroups()">⇅ all</button></span>
+      </div>
+      <div class="group-body">${items.map(a => artifactCard(a, true)).join('')}</div>
+    </div>`;
+  }
+  const orphans = data.artifacts.filter(a => !assigned.has(a.id));
+  if (orphans.length) html += `<div class="group"><div class="group-head">
+    <strong>Other</strong><span class="pill">${orphans.length}</span></div>
+    <div class="group-body">${orphans.map(a => artifactCard(a, true)).join('')}</div></div>`;
+
+  el.innerHTML = `<div class="card">
+    <h3><i class="fas fa-list-check"></i> Review queue
+      <span class="sub">accepting feeds the graph, rejecting dims the node</span></h3>
+    ${html || '<div class="empty">Nothing to review.</div>'}</div>`;
+}
+
+function toggleAllGroups() {
+  const collapsed = $$('.group').some(g => g.classList.contains('collapsed'));
+  $$('.group').forEach(g => g.classList.toggle('collapsed', !collapsed));
+}
+
+function artifactCard(a, withActions) {
+  const typeLabel = State.taxonomies.artifact_types[a.artifact_type]?.label || a.artifact_type;
+  const dirCls = a.direction === 'up' ? 'up' : a.direction === 'down' ? 'down' : 'flat';
+  const dirTxt = a.direction ? `${a.direction}${a.horizon ? ' · ' + a.horizon : ''}` : '';
+  const ringPct = Math.round((a.relevance || 0) * 100);
+  return `<div class="artifact ${a.review === 'rejected' ? 'rejected' : ''} ${a.drift ? 'drift' : ''}"
+      onclick="showArtifact(${a.id})" style="cursor:pointer">
+    <div class="art-head">
+      <div style="flex:1;min-width:0">
+        <div class="art-title">${esc(a.title)}</div>
+      </div>
+      <div class="relevance-ring" title="agent relevance ${ringPct}%">${ringPct}</div>
+    </div>
+    <div class="art-desc">${esc((a.description || '').slice(0, 260))}${(a.description || '').length > 260 ? '…' : ''}</div>
+    <div class="art-meta">
+      ${a.domain ? `<span class="tag dom" style="background:${domColor(a.domain)}">${esc(domLabel(a.domain))}</span>` : '<span class="tag">unclassified</span>'}
+      <span class="tag">${esc(typeLabel)}</span>
+      ${dirTxt ? `<span class="tag ${dirCls}">${dirTxt}${a.magnitude != null ? ' · ' + a.magnitude : ''}</span>` : ''}
+      ${a.drift ? '<span class="tag" style="color:var(--orange)"><i class="fas fa-triangle-exclamation"></i> drift</span>' : ''}
+      <span class="tag">${esc(a.source || 'unknown')}</span>
+      <span>${fmtDate(a.date_published)}</span>
+      ${a.review !== 'pending' ? `<span class="tag">${a.review}</span>` : ''}
+    </div>
+    ${(a.entities || []).length ? `<div class="art-meta" style="margin-bottom:9px">
+      ${a.entities.map(e => `<span class="tag" style="color:var(--teal)">${esc(e)}</span>`).join('')}</div>` : ''}
+    <div class="art-actions" onclick="event.stopPropagation()">
+      <button class="btn sm" onclick="reviewArtifact(${a.id},'accept')"><i class="fas fa-check"></i> Accept</button>
+      <button class="btn sm danger" onclick="reviewArtifact(${a.id},'reject')"><i class="fas fa-xmark"></i> Reject</button>
+      ${a.review !== 'pending' ? `<button class="btn sm" onclick="reviewArtifact(${a.id},'restore')">restore</button>` : ''}
+      ${a.url ? `<a class="btn sm" href="${esc(a.url)}" target="_blank" rel="noopener"><i class="fas fa-arrow-up-right-from-square"></i> source</a>` : ''}
+    </div>
+  </div>`;
+}
+
+async function reviewArtifact(id, decision) {
+  try {
+    await api(`/api/artifacts/${id}/review`, {
+      method: 'POST', body: JSON.stringify({ decision, reviewer: 'operator' }) });
+    await reloadArtifacts();
+    if (State.view === 'graph') await viewGraph($('#view'));
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function showArtifact(id) {
+  try {
+    const a = await api('/api/artifacts/' + id);
+    openModal(esc(a.title), `
+      <div class="meta-strip">
+        ${a.domain ? `<span class="tag dom" style="background:${domColor(a.domain)}">${esc(domLabel(a.domain))}</span>` : ''}
+        <span class="tag">${esc(State.taxonomies.artifact_types[a.artifact_type]?.label || a.artifact_type)}</span>
+        <span class="tag">${esc(a.source || 'unknown')}</span>
+        <span>${fmtDate(a.date_published)}</span>
+        <span>relevance ${(a.relevance || 0).toFixed(2)}</span>
+        <span class="tag">${a.review}</span>
+        ${a.drift ? '<span class="tag" style="color:var(--orange)">drift flagged</span>' : ''}
+      </div>
+      <div class="answer"><p>${esc(a.description || '')}</p></div>
+      ${a.direction ? `<div class="field" style="margin-top:14px">
+        <label>Directional reading</label>
+        <div class="meta-strip" style="border:none;padding:0">
+          <span class="tag ${a.direction}">${a.direction}</span>
+          <span class="tag">horizon ${esc(a.horizon || '?')}</span>
+          <span class="tag">magnitude ${a.magnitude ?? '—'}</span>
+        </div></div>` : ''}
+      ${(a.entities || []).length ? `<div class="field">
+        <label>Named entities</label><div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${a.entities.map(e => `<span class="tag" style="color:var(--teal)">${esc(e)}</span>`).join('')}</div></div>` : ''}
+      ${a.relevance_reason ? `<div class="field"><label>Why the agent kept it</label>
+        <p style="color:var(--text2);font-size:13px">${esc(a.relevance_reason)}</p></div>` : ''}
+      ${a.content ? `<div class="field"><label>Extracted text</label>
+        <div style="max-height:240px;overflow:auto;font-size:12.5px;color:var(--text2);
+        background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--border)">${esc(a.content)}</div></div>` : ''}
+      ${a.relationships?.length ? `<div class="field"><label>Connected to</label>
+        ${a.relationships.map(r => `<div class="source-item">
+          <span class="tag">${esc(r.type)}</span> ${r.direction === 'out' ? '→' : '←'}
+          artifact #${r.peer_id} ${r.description ? `<div style="color:var(--text2);margin-top:5px">${esc(r.description)}</div>` : ''}
+          ${r.confidence != null ? `<div style="color:var(--text3);font-size:11px;margin-top:4px">
+            prior ${r.confidence} · lag ${r.lag ?? '?'}q</div>` : ''}
+        </div>`).join('')}</div>` : ''}
+      ${a.reviews?.length ? `<div class="field"><label>Review history</label>
+        ${a.reviews.map(r => `<div style="font-size:12px;color:var(--text2)">
+          <strong>${esc(r.reviewer)}</strong> ${esc(r.decision)} · ${fmtDate(r.created_at)}
+          ${r.note ? '— ' + esc(r.note) : ''}</div>`).join('')}</div>` : ''}
+    `, `
+      ${a.url ? `<a class="btn" href="${esc(a.url)}" target="_blank" rel="noopener">Open source</a>` : ''}
+      ${a.drift ? `<button class="btn" onclick="clearDrift(${a.id})">Clear drift flag</button>` : ''}
+      <button class="btn danger" onclick="deleteArtifact(${a.id})"><i class="fas fa-trash"></i></button>
+      <button class="btn primary" onclick="closeModal()">Close</button>`);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function deleteArtifact(id) {
+  if (!confirm('Delete this artifact and its edges?')) return;
+  await api('/api/artifacts/' + id, { method: 'DELETE' });
+  closeModal(); await reloadArtifacts();
+  if (State.view === 'graph') await viewGraph($('#view'));
+  toast('Deleted.', 'ok');
+}
+
+async function clearDrift(id) {
+  await api(`/api/artifacts/${id}/clear-drift`, { method: 'POST' });
+  closeModal(); await reloadArtifacts(); toast('Drift flag cleared.', 'ok');
+}
+
+function highlightConnections(id) {
+  const rel = (State.graph.edges || []).filter(e => e.from === id || e.to === id);
+  if (rel.length) toast(`<strong>${rel.length}</strong> connection(s) · ` +
+    [...new Set(rel.map(e => e.label))].map(esc).join(', '));
+}
+
+// ---------- research gaps ----------
+async function viewGaps(el) {
+  el.className = 'view';
+  const g = await api(`/api/investigations/${State.invId}/research-gaps?refresh=true`);
+  const cov = Object.entries(g.coverage);
+  const maxN = Math.max(1, ...cov.map(([, n]) => n));
+
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-chart-simple"></i> Coverage across the taxonomy
+        <span class="sub">${g.domains_covered}/${g.domains_total} domains have evidence</span></h3>
+      <div class="grid c4" style="margin-bottom:16px">
+        ${cov.map(([id, n]) => `<div class="stat clickable ${n ? '' : 'stat'}"
+            ${n ? `onclick="filterGraphDomain('${id}')"` : ''}>
+          <div class="n" style="color:${domColor(id)}">${n}</div>
+          <div class="l">${esc(domLabel(id))}</div>
+        </div>`).join('')}
+      </div>
+      <div class="banner ${g.directional_count ? 'ok' : 'warn'}">
+        <i class="fas fa-compass"></i>
+        <span><strong>${g.directional_count}</strong> of ${g.total_artifacts} artifacts carry a
+        directional claim with a magnitude and a horizon. An artifact without one is
+        background, not a finding — the transmission chains need the first kind.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><i class="fas fa-vial"></i> Open gaps
+        <span class="sub">dimensions with <em>nothing at all</em> behind them</span></h3>
+      ${g.gaps.length ? g.gaps.map(x => gapCard(x, g.rows.find(r => r.domain === x.domain))).join('') :
+        '<div class="empty">Every taxonomy domain has at least one artifact.</div>'}
+    </div>
+
+    ${g.thin.length ? `<div class="card">
+      <h3><i class="fas fa-tint"></i> Thin domains
+        <span class="sub">covered, but too lightly to lean on — reported separately from empty</span></h3>
+      ${g.thin.map(t => `<div class="gap">
+        <div class="domain-name"><span class="dot" style="background:${domColor(t.domain)}"></span>
+          ${esc(t.label)}</div>
+        <div class="gap-why">${t.artifacts} artifact(s). Below three, nothing here can support a
+        claim about a channel.</div>
+        <button class="btn sm" onclick="switchView('artifacts')">Review what is here</button>
+      </div>`).join('')}</div>` : ''}
+
+    ${g.unbridged_channels.length ? `<div class="card">
+      <h3><i class="fas fa-unlink"></i> Unbridged channels
+        <span class="sub">both endpoints are covered, but no edge connects them</span></h3>
+      <p style="color:var(--text2);font-size:12.5px;margin-bottom:12px">
+        These are the missing <em>mechanisms</em>, not the missing documents. The taxonomy says a
+        channel exists between these two domains; the map has evidence on both sides and nothing
+        joining them.</p>
+      <table class="tbl"><thead><tr><th>Channel</th><th>From</th><th>To</th>
+        <th>Prior</th><th>Lag</th></tr></thead><tbody>
+        ${g.unbridged_channels.slice(0, 18).map(c => `<tr>
+          <td>${esc(c.channel)}</td>
+          <td><span class="dot" style="background:${domColor(c.src)}"></span> ${esc(c.src_label)}</td>
+          <td><span class="dot" style="background:${domColor(c.dst)}"></span> ${esc(c.dst_label)}</td>
+          <td>${c.strength}</td><td>${c.lag}q</td></tr>`).join('')}
+      </tbody></table></div>` : ''}`;
+
+  $('#gapCount').textContent = g.gaps.length;
+}
+
+function gapCard(x, row) {
+  const status = row?.status || 'open';
+  const badge = status === 'ruled_out' ? '<span class="tag" style="color:var(--green)">covered</span>'
+    : status === 'investigating' ? '<span class="tag" style="color:var(--accent)">investigating</span>'
+    : `<span class="tag" style="color:var(--orange)">${x.priority} priority</span>`;
+  return `<div class="gap ${x.priority >= 5 ? 'priority' : ''}">
+    <div class="domain-name"><span class="dot" style="background:${x.color}"></span>
+      ${esc(x.label)} ${badge}
+      ${x.hub ? '<span class="tag" style="color:var(--purple)">hub</span>' : ''}</div>
+    <div class="gap-why">${esc(x.why)}</div>
+    ${row ? `<div class="gap-query">${esc(row.query || row.dimension)}</div>` : ''}
+    <div class="art-actions">
+      ${row ? `<button class="btn sm primary" onclick="runGap(${row.id})">
+        <i class="fas fa-play"></i> Run a targeted collection</button>` : ''}
+      <button class="btn sm" onclick="askAbout('${esc(x.label).replace(/'/g, "\\'")}')">
+        <i class="fas fa-lightbulb"></i> Ask anyway</button>
+    </div></div>`;
+}
+
+async function runGap(id) {
+  try {
+    const r = await api(`/api/investigations/${State.invId}/research-gaps/run?gap_id=${id}`,
+      { method: 'POST' });
+    toast(`Queued: <code>${esc(r.goal)}</code>`, 'ok');
+    startPolling();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function filterGraphDomain(id) {
+  State.domains = new Set([id]);
+  switchView('graph');
+}
+
+// ---------- explainer ----------
+const EXPLAIN_MODES = [
+  ['explain', 'Explain'], ['deep-dive', 'Deep dive'], ['compare', 'Compare'],
+  ['tutor', 'Tutor'], ['critique', 'Critique'], ['tldr', 'TL;DR'],
+  ['glossary', 'Glossary'], ['channel-map', 'Channel map'],
+];
+
+async function viewExplainer(el) {
+  el.className = 'view';
+  const [list, sugg] = await Promise.all([
+    api(`/api/investigations/${State.invId}/explanations`),
+    api(`/api/investigations/${State.invId}/suggestions`).catch(() => ({ questions: [] })),
+  ]);
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-lightbulb"></i> Ask this investigation
+        <span class="sub">answers are grounded: only collected sources, quotes verified verbatim</span></h3>
+      <textarea id="qText" rows="3" placeholder="How does a rate decision transmit into stablecoin reserve composition and sovereign issuance costs?"></textarea>
+      <div class="row" style="margin-top:10px">
+        <div class="field" style="margin:0"><label>Mode</label>
+          <select id="qMode">${EXPLAIN_MODES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+        <div class="field" style="margin:0"><label>Depth</label>
+          <select id="qDepth"><option value="shallow">Shallow</option>
+            <option value="balanced" selected>Balanced</option><option value="deep">Deep</option></select></div>
+        <div class="field" style="margin:0"><label>Audience</label>
+          <select id="qAud"><option value="beginner">Beginner</option>
+            <option value="intermediate" selected>Intermediate</option>
+            <option value="advanced">Advanced</option></select></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:9px;align-items:center">
+        <button class="btn primary" id="askBtn" onclick="askQuestion()"><i class="fas fa-paper-plane"></i> Ask</button>
+        ${sugg.questions.length ? `<span style="font-size:12px;color:var(--text3)">suggested:</span>
+          ${sugg.questions.slice(0, 3).map(q => `<button class="btn sm"
+            onclick="document.getElementById('qText').value=${JSON.stringify(q)}">${esc(q.slice(0, 60))}…</button>`).join('')}` : ''}
+      </div>
+      <div id="askStatus"></div>
+    </div>
+    <div id="answerArea">${list.explanations.map(expCard).join('') ||
+      '<div class="empty">No answers yet. Every answer is checked against the sources it cites before you see it.</div>'}</div>`;
+}
+
+function askAbout(text) {
+  switchView('explainer');
+  setTimeout(() => {
+    const t = $('#qText');
+    if (t) { t.value = `What does this investigation have on ${text}?`; t.focus(); }
+  }, 120);
+}
+
+async function askQuestion() {
+  const question = $('#qText').value.trim();
+  if (!question) return toast('Ask something first.', 'err');
+  const btn = $('#askBtn');
+  btn.disabled = true;
+  $('#askStatus').innerHTML = `<div class="banner info" style="margin-top:12px">
+    <i class="fas fa-spinner spin"></i><span>Retrieving sources and drafting. The answer will be
+    verified against every quote it cites before it appears.</span></div>`;
+  try {
+    await api(`/api/investigations/${State.invId}/explain`, {
+      method: 'POST',
+      body: JSON.stringify({
+        question, mode: $('#qMode').value, depth: $('#qDepth').value,
+        audience: $('#qAud').value,
+      }),
+    });
+    startPolling();
+  } catch (e) {
+    $('#askStatus').innerHTML = '';
+    btn.disabled = false;
+    toast(e.message, 'err');
+  }
+}
+
+function expCard(e) {
+  const conf = e.confidence ?? 0;
+  const confColor = conf >= 0.6 ? 'var(--green)' : conf >= 0.35 ? 'var(--orange)' : 'var(--red)';
+  const dropped = e.dropped_citations || 0;
+  return `<div class="card" id="exp-${e.id}">
+    <div class="art-head">
+      <div class="art-title" style="flex:1">${esc(e.question)}</div>
+      <div style="display:flex;gap:6px">
+        ${e.bookmarked ? '<i class="fas fa-bookmark" style="color:var(--orange)"></i>' : ''}
+        ${e.watched ? '<i class="fas fa-eye" style="color:var(--accent)"></i>' : ''}
+      </div>
+    </div>
+    <div class="meta-strip">
+      <span class="tag">${esc(e.mode)}</span>
+      <span class="tag">${esc(e.depth)}</span>
+      <span>${fmtDate(e.created_at)}</span>
+      ${e.domains?.length ? e.domains.map(d => `<span class="tag dom"
+        style="background:${domColor(d)}">${esc(domLabel(d))}</span>`).join('') : ''}
+      ${e.confidence != null ? `<span style="display:flex;align-items:center;gap:6px">
+        <span class="conf-bar"><i style="width:${Math.round(conf * 100)}%;background:${confColor}"></i></span>
+        confidence ${conf.toFixed(2)}</span>` : ''}
+      ${dropped ? `<span class="tag" style="color:var(--red)">
+        ${dropped} unverifiable citation${dropped > 1 ? 's' : ''}</span>` : ''}
+      ${e.status === 'no_evidence' ? '<span class="tag" style="color:var(--orange)">no evidence — filed as a gap</span>' : ''}
+    </div>
+    <div class="answer" data-raw="${esc(e.answer || '')}">${renderAnswer(e.answer)}</div>
+    <div class="art-actions" style="margin-top:14px">
+      <button class="btn sm" onclick="showSources(${e.id})"><i class="fas fa-book-open"></i> Evidence</button>
+      ${e.critique ? `<button class="btn sm" onclick="showCritique(${e.id})"><i class="fas fa-scale-balanced"></i> Self-critique</button>` : ''}
+      ${e.roadmap ? `<button class="btn sm" onclick="showRoadmap(${e.id})"><i class="fas fa-route"></i> Roadmap</button>` : ''}
+      <button class="btn sm" onclick="followUp(${e.id})"><i class="fas fa-reply"></i> Follow up</button>
+      <button class="btn sm" onclick="makeQuiz(${e.id})"><i class="fas fa-graduation-cap"></i> Quiz</button>
+      <button class="btn sm" onclick="toggleBookmark(${e.id})"><i class="fas fa-bookmark"></i> ${e.bookmarked ? 'Unbookmark' : 'Bookmark'}</button>
+      <button class="btn sm" onclick="toggleWatch(${e.id})"><i class="fas fa-eye"></i> ${e.watched ? 'Unwatch' : 'Watch for drift'}</button>
+    </div>
+    <div id="expextra-${e.id}"></div>
+  </div>`;
+}
+
+function renderAnswer(md) {
+  if (!md) return '';
+  // Citation markers become chips: a green one was verified verbatim, a red
+  // struck-through one was dropped. The reader can see the check, not just be
+  // told it happened.
+  let html = marked.parse(md);
+  html = html.replace(/\[(\d{1,3})\]/g, (m, n) =>
+    `<span class="cite" title="source ${n}">${n}</span>`);
+  return html;
+}
+
+async function showSources(id) {
+  const e = await api('/api/explanations/' + id);
+  const droppedIds = (e.trace?.dropped || []).map(d => d.index);
+  openModal('Evidence', `
+    <div class="banner info"><i class="fas fa-shield-halved"></i>
+      <span>${e.trace?.grounding?.n_verified ?? 0} of ${e.trace?.grounding?.n_citations ?? 0}
+      citations carry a quote that appears verbatim in the cited source.
+      ${droppedIds.length ? `<strong>${droppedIds.length}</strong> citation(s) could not be verified and were dropped: ${droppedIds.join(', ')}.` : ''}
+      Confidence follows <em>distinct sources</em>, not quote count — five quotes from one document
+      do not read as five sources agreeing.</span></div>
+    <div class="sources">${(e.sources || []).map(s => {
+      const dropped = droppedIds.includes(s.index);
+      return `<div class="source-item ${dropped ? 'dropped' : ''}">
+        <div><strong>[${s.index}]</strong> ${esc(s.title)}</div>
+        <div style="color:var(--text3);font-size:11px;margin-top:4px">
+          ${esc(s.source || '')} ${s.domain ? '· ' + esc(domLabel(s.domain)) : ''}
+          ${dropped ? '· <span style="color:var(--red)">unverified — no quote from this source was found in the answer</span>' : ''}
+        </div></div>`;
+    }).join('')}</div>`, `<button class="btn primary" onclick="closeModal()">Close</button>`);
+}
+
+async function showCritique(id) {
+  const e = await api('/api/explanations/' + id);
+  openModal('Self-critique', `<div class="answer">${renderAnswer(e.critique)}</div>`,
+    `<button class="btn primary" onclick="closeModal()">Close</button>`);
+}
+
+async function showRoadmap(id) {
+  const e = await api('/api/explanations/' + id);
+  openModal('What this needs next', `<div class="answer">${renderAnswer(e.roadmap)}</div>`,
+    `<button class="btn primary" onclick="closeModal()">Close</button>`);
+}
+
+function followUp(id) {
+  switchView('explainer');
+  setTimeout(() => {
+    $('#qText').value = '';
+    $('#qText').placeholder = 'Ask a follow-up about the answer above…';
+    toast('Ask your follow-up — it will be linked into the same thread.');
+  }, 120);
+}
+
+async function makeQuiz(id) {
+  const r = await api(`/api/explanations/${id}/quiz?n=3`, { method: 'POST' });
+  const el = $('#expextra-' + id);
+  if (!r.quiz.length) { el.innerHTML = '<div class="banner warn" style="margin-top:12px">No quiz could be generated from this answer.</div>'; return; }
+  el.innerHTML = `<div class="card" style="margin:14px 0 0;background:var(--bg)">
+    <h3><i class="fas fa-graduation-cap"></i> Comprehension checks</h3>
+    ${r.quiz.map((q, i) => `<details style="margin-bottom:9px">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px">${i + 1}. ${esc(q.question)}</summary>
+      <div style="padding:9px 0 0 14px;font-size:12.5px;color:var(--text2)">
+        <div><strong style="color:var(--text)">Answer:</strong> ${esc(q.answer)}</div>
+        ${q.why_wrong ? `<div style="margin-top:5px"><strong>What a wrong answer gets wrong:</strong> ${esc(q.why_wrong)}</div>` : ''}
+      </div></details>`).join('')}</div>`;
+}
+
+async function toggleBookmark(id) {
+  await api(`/api/explanations/${id}/bookmark`, { method: 'POST' });
+  await refreshView();
+}
+async function toggleWatch(id) {
+  await api(`/api/explanations/${id}/watch?watched=true`, { method: 'POST' });
+  toast('Watching — this question will be flagged when the evidence under it moves.', 'ok');
+}
+
+// ---------- assessment ----------
+async function viewAssess(el) {
+  el.className = 'view';
+  const inv = currentInv();
+  const data = await api(`/api/investigations/${State.invId}/assessments`);
+  const rows = data.assessments || [];
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-scale-balanced"></i> Transmission assessments
+        <span class="sub">deterministic over stored rows — re-scores are new rows, never edits</span></h3>
+      <div class="row" style="margin-bottom:12px">
+        <div class="field" style="margin:0"><label>Driver</label>
+          <select id="assDriver">
+            <option value="">${inv?.driver ? inv.driver + ' (investigation default)' : '— investigation default —'}</option>
+            ${Object.entries(State.taxonomies.drivers).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}
+          </select></div>
+        <div class="field" style="margin:0"><label>Shock (optional override)</label>
+          <input type="text" id="assShock" placeholder="${esc(inv?.shock || 'A 50bp hike…')}"></div>
+      </div>
+      <button class="btn primary" onclick="requestAssessment()">
+        <i class="fas fa-play"></i> Run transmission assessment</button>
+      <div id="assList" style="margin-top:16px">
+        ${rows.length ? rows.map(a => `
+          <div class="artifact" onclick="showAssessment(${a.id})" style="cursor:pointer">
+            <div class="art-head"><div class="art-title">#${a.id} — ${esc(a.driver_label || a.driver || 'no driver')}</div>
+              <div class="relevance-ring">${Math.round(a.overall_pct)}%</div></div>
+            <div class="art-meta">
+              <span class="tag">coverage ${a.coverage_pct}%</span>
+              <span class="tag">confidence ${a.confidence_pct}%</span>
+              <span class="tag">exposure ${a.exposure_pct}%</span>
+              ${a.decision ? `<span class="tag" style="color:var(--green)">${esc(a.decision)}</span>` : '<span class="tag">open</span>'}
+              <span>${fmtDate(a.created_at)}</span>
+            </div>
+            ${a.shock ? `<div class="art-desc">${esc(a.shock)}</div>` : ''}
+          </div>`).join('') : '<div class="empty">No assessments yet. The score is a pure function of stored rows + taxonomy.</div>'}
+      </div>
+    </div>
+    <div class="card">
+      <h3><i class="fas fa-users"></i> Council panel
+        <span class="sub">six seats, each publishing its blind spot</span></h3>
+      <div id="councilPanel"><div class="empty">Loading…</div></div>
+    </div>`;
+  try {
+    const p = await api('/api/council/panel');
+    $('#councilPanel').innerHTML = `<div class="grid c2">${p.seats.map(s => `
+      <div class="domain-card"><div class="domain-name">${esc(s.discipline)}</div>
+        <div class="domain-role">${esc(s.id)} · owns ${(s.owns || []).join(', ') || 'nothing — attacks only'}</div>
+        <div style="font-size:11.5px;color:var(--text2);margin-top:6px">Blind spot: ${esc(s.blind_spot)}</div>
+      </div>`).join('')}</div>`;
+  } catch (e) { $('#councilPanel').innerHTML = '<div class="empty">Panel unavailable.</div>'; }
+}
+
+async function requestAssessment() {
+  const driver = $('#assDriver').value || null;
+  const shock = $('#assShock').value.trim() || null;
+  try {
+    await api(`/api/investigations/${State.invId}/assess`,
+      { method: 'POST', body: JSON.stringify({ driver, shock }) });
+    toast('Assessment queued. Watch the console.', 'ok');
+    startPolling();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function showAssessment(id) {
+  const a = await api('/api/assessments/' + id);
+  const sc = a.scoring || {};
+  openModal(`Assessment #${a.id} — ${Math.round(a.overall_pct)}%`, `
+    <div class="meta-strip">
+      <span class="tag">${esc(a.driver_label || a.driver || 'no driver')}</span>
+      <span>coverage ${a.coverage_pct}%</span><span>confidence ${a.confidence_pct}%</span>
+      <span>exposure ${a.exposure_pct}%</span>
+      <span>${fmtDate(a.created_at)}</span>
+      ${a.decision ? `<span class="tag" style="color:var(--green)">${esc(a.decision)}</span>` : ''}
+    </div>
+    <div class="answer">${marked.parse(a.markdown || '')}</div>
+    <div class="field" style="margin-top:14px"><label>Channels (${(a.channels || []).length})</label>
+      <table class="tbl"><thead><tr><th>From → To</th><th>Channel</th><th>Edges</th><th>Prior</th></tr></thead><tbody>
+      ${(a.channels || []).map(c => `<tr><td>${esc(c.src_label)} → ${esc(c.dst_label)}</td>
+        <td>${esc(c.channel)}${c.supported ? '' : ' (unbridged)'}</td>
+        <td>${c.n_edges}</td><td>${c.strength ?? '—'}</td></tr>`).join('')}
+      </tbody></table></div>
+    <div class="field"><label>Transmission map (mermaid)</label>
+      <div class="gap-query">${esc((a.diagrams || {}).transmission || '')}</div></div>
+  `, `
+    <button class="btn" onclick="rescoreAssessment(${a.id})">Re-score (new row)</button>
+    <button class="btn" onclick="decideAssessment(${a.id})">Decide</button>
+    <button class="btn primary" onclick="closeModal()">Close</button>`);
+}
+
+async function rescoreAssessment(id) {
+  const r = await api(`/api/assessments/${id}/rescore`, { method: 'POST' });
+  closeModal(); await refreshView();
+  toast(r.drifted ? 'Re-scored — numbers moved.' : 'Re-scored — numbers unchanged.', r.drifted ? '' : 'ok');
+}
+
+async function decideAssessment(id) {
+  openModal('Decide', `
+    <div class="field"><label>Decision</label>
+      <select id="decVal"><option value="accept">accept</option>
+      <option value="guardrails">guardrails</option>
+      <option value="reject">reject</option>
+      <option value="exception">exception (needs expiry)</option></select></div>
+    <div class="field"><label>Note</label><input type="text" id="decNote"></div>
+    <div class="field"><label>Expires at (ISO, for exception)</label>
+      <input type="text" id="decExp" placeholder="2027-01-01T00:00:00+00:00"></div>`,
+    `<button class="btn" onclick="showAssessment(${id})">Back</button>
+     <button class="btn primary" onclick="submitDecision(${id})">Record</button>`);
+}
+
+async function submitDecision(id) {
+  try {
+    await api(`/api/assessments/${id}/decision`, { method: 'POST', body: JSON.stringify({
+      decision: $('#decVal').value, note: $('#decNote').value,
+      expires_at: $('#decExp').value.trim() || null }) });
+    closeModal(); await refreshView(); toast('Decision recorded on the ledger.', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// ---------- summary ----------
+async function viewBoard(el) {
+  el.className = 'view';
+  const b = await api('/api/leadership/board');
+  el.innerHTML = `
+    <div class="grid c4" style="margin-bottom:14px">
+      <div class="stat"><div class="n">${b.exposure.n_assessed}</div><div class="l">Assessed</div></div>
+      <div class="stat"><div class="n" style="color:var(--accent)">${b.exposure.mean_exposure}%</div><div class="l">Mean exposure</div></div>
+      <div class="stat"><div class="n" style="color:var(--orange)">${b.decisions.n_waiting}</div><div class="l">Awaiting decision</div></div>
+      <div class="stat"><div class="n" style="color:var(--${b.integrity.ok ? 'green' : 'red'})">${b.integrity.ok ? 'OK' : '!'}</div><div class="l">System integrity</div></div>
+    </div>
+    ${b.alerts.alerts.length ? `<div class="card"><h3><i class="fas fa-bell"></i> Alerts
+      <span class="sub">${b.alerts.count} — recomputed live, never dismissible into silence</span></h3>
+      ${b.alerts.alerts.map(a => `<div class="banner ${a.severity === 'info' ? 'info' : 'warn'}">
+        <i class="fas fa-${a.severity === 'info' ? 'info' : 'triangle-exclamation'}"></i>
+        <span><strong>${esc(a.title)}</strong> — ${esc(a.detail)}</span></div>`).join('')}</div>`
+      : '<div class="banner ok"><i class="fas fa-check"></i><span>No alerts.</span></div>'}
+    <div class="grid c2">
+      <div class="card"><h3><i class="fas fa-vial"></i> Coverage health</h3>
+        <table class="tbl"><tbody>
+          <tr><td>Investigations</td><td style="text-align:right">${b.health.investigations}</td></tr>
+          <tr><td>Assessed</td><td style="text-align:right">${b.health.assessed}</td></tr>
+          <tr><td>Open gaps</td><td style="text-align:right">${b.health.open_gaps}</td></tr>
+          <tr><td>Thin domains</td><td style="text-align:right">${b.health.thin_domains}</td></tr>
+          <tr><td>Mean coverage</td><td style="text-align:right">${b.health.mean_coverage_pct}%</td></tr>
+        </tbody></table></div>
+      <div class="card"><h3><i class="fas fa-coins"></i> Exposure by driver</h3>
+        ${Object.entries(b.exposure.by_driver).map(([k, v]) =>
+          `<div style="font-size:12.5px;margin-bottom:6px"><strong>${esc(k)}</strong> — ${v.n} assessment(s), mean ${v.mean}%, max ${v.max}%</div>`).join('') || '<div class="empty">Nothing assessed yet.</div>'}
+        <div style="margin-top:12px"><button class="btn sm" onclick="downloadBoard()">Markdown</button></div></div>
+    </div>
+    <div class="card"><h3><i class="fas fa-list-check"></i> Decision queue
+      <span class="sub">${b.decisions.n_waiting} waiting — highest exposure first</span></h3>
+      ${(b.decisions.queue || []).map(q => `<div class="artifact" style="cursor:pointer" onclick="showAssessment(${q.id})">
+        <div class="art-title">Assessment #${q.id} — inv ${q.investigation_id} (${esc(q.driver || 'no driver')})</div>
+        <div class="art-meta"><span class="tag">exposure ${q.exposure_pct}%</span>
+        <span>${esc(q.waiting_reason)}</span></div></div>`).join('') ||
+        '<div class="empty">Nothing waiting.</div>'}</div>
+    <div class="card"><h3><i class="fas fa-layer-group"></i> Estate-wide domains
+      <span class="sub">${b.graph.domains_covered}/${b.graph.domains_total} covered</span></h3>
+      <div style="font-size:12.5px;color:var(--text2)">
+        ${(b.graph.missing || []).length ? 'Missing everywhere: ' + b.graph.missing.map(esc).join(', ') : 'Every domain has evidence somewhere.'}
+      </div></div>`;
+}
+
+async function downloadBoard() {
+  const res = await fetch('/api/leadership/board.md', { headers: { 'X-Econ-Session': SESSION } });
+  const text = await res.text();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+  a.download = 'leadership-board.md'; a.click();
+  toast('Board downloaded.', 'ok');
+}
+
+async function viewManager(el) {
+  el.className = 'view';
+  const runs = await api('/api/manager/runs');
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-diagram-project"></i> Agentic manager
+        <span class="sub">parse is side-effect free — run creates, compile aggregates</span></h3>
+      <textarea id="mgrCmd" rows="2" placeholder="run detailed investigations on rate decision, stablecoin float and datacenter power"></textarea>
+      <div style="margin-top:10px;display:flex;gap:9px">
+        <button class="btn" onclick="managerParse()">Understand (no side effects)</button>
+        <button class="btn primary" onclick="managerRun()"><i class="fas fa-play"></i> Run fan-out</button>
+      </div>
+      <div id="mgrPlan" style="margin-top:12px"></div>
+    </div>
+    <div class="card"><h3><i class="fas fa-list"></i> Runs</h3>
+      <div id="mgrRuns">${runs.runs.map(r => `
+        <div class="artifact"><div class="art-title">#${r.id} — ${esc(r.command.slice(0, 90))}</div>
+          <div class="art-meta"><span class="tag">${esc(r.status)}</span>
+          <span>${fmtDate(r.created_at)}</span></div>
+          <div class="art-actions"><button class="btn sm" onclick="managerTimeline(${r.id})">Timeline</button>
+          <button class="btn sm primary" onclick="managerCompile(${r.id})">Compile</button></div>
+          <div id="mgrtl-${r.id}"></div></div>`).join('') || '<div class="empty">No manager runs yet.</div>'}</div>
+    </div>`;
+}
+
+async function managerParse() {
+  const command = $('#mgrCmd').value.trim();
+  if (!command) return toast('Give a command first.', 'err');
+  const p = await api('/api/manager/parse', { method: 'POST', body: JSON.stringify({ command }) });
+  $('#mgrPlan').innerHTML = p.ok
+    ? `<div class="banner ok"><i class="fas fa-check"></i><span>${p.topics.length} topic(s), no side effects.${p.llm_enriched ? ' LLM enriched.' : ''}</span></div>
+       ${p.topics.map(t => `<div class="source-item"><strong>${esc(t.label)}</strong>
+       <div style="color:var(--text3);font-size:11px">${esc((t.domains || []).join(', '))}${t.shock ? ' · ' + esc(t.shock) : ''}</div></div>`).join('')}`
+    : `<div class="banner warn"><i class="fas fa-triangle-exclamation"></i><span>${esc(p.reason || 'No topics recognised.')}</span></div>`;
+}
+
+async function managerRun() {
+  const command = $('#mgrCmd').value.trim();
+  if (!command) return toast('Give a command first.', 'err');
+  try {
+    const r = await api('/api/manager/run', { method: 'POST', body: JSON.stringify({ command }) });
+    toast(`Created ${r.children.length} investigation(s).`, 'ok');
+    startPolling(); await refreshView();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function managerTimeline(id) {
+  const t = await api(`/api/manager/runs/${id}`);
+  $('#mgrtl-' + id).innerHTML = t.ok
+    ? (t.lanes || []).map(l => `<div style="font-size:12px;margin-top:6px"><strong>${esc(l.label)}</strong> (inv ${l.investigation_id}): ${(l.runs || []).map(r => `#${r.id} ${r.status}`).join(', ') || 'no runs yet'}</div>`).join('')
+    : `<div class="banner err">${esc(t.reason || 'No such run')}</div>`;
+}
+
+async function managerCompile(id) {
+  try {
+    const r = await api(`/api/manager/runs/${id}/compile`, { method: 'POST' });
+    toast(r.idempotent ? 'Already compiled.' : `Compiled ${r.total_artifacts} artifacts.`, 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// ---------- summary ----------
+async function viewSummary(el) {
+  el.className = 'view';
+  const s = await api(`/api/investigations/${State.invId}/summary`);
+  const covered = s.domains.filter(d => d.artifacts);
+  const missing = s.domains.filter(d => !d.artifacts);
+  el.innerHTML = `
+    <div class="grid c4" style="margin-bottom:14px">
+      <div class="stat"><div class="n">${s.counts.artifacts}</div><div class="l">Artifacts</div></div>
+      <div class="stat"><div class="n" style="color:var(--accent)">${s.counts.accepted}</div><div class="l">Accepted</div></div>
+      <div class="stat"><div class="n" style="color:var(--orange)">${s.counts.pending}</div><div class="l">Awaiting review</div></div>
+      <div class="stat"><div class="n" style="color:var(--purple)">${s.counts.relationships}</div><div class="l">Edges</div></div>
+    </div>
+
+    ${missing.length ? `<div class="banner warn"><i class="fas fa-triangle-exclamation"></i>
+      <span><strong>${missing.length} of ${s.domains.length} domains have no evidence at all</strong>:
+      ${missing.map(d => esc(d.label)).join(', ')}. This map is narrower than its brief.</span></div>` : ''}
+
+    ${s.strongest_signals.length ? `<div class="card">
+      <h3><i class="fas fa-arrow-trend-up"></i> Strongest directional signals
+        <span class="sub">ranked by claimed magnitude — background, not findings</span></h3>
+      ${s.strongest_signals.map(x => `<div class="artifact">
+        <div class="art-meta" style="margin-bottom:6px">
+          <span class="tag ${x.direction}" style="color:var(--${x.direction === 'up' ? 'green' : x.direction === 'down' ? 'red' : 'text3'})">
+            ${x.direction}</span>
+          <span class="tag">magnitude ${x.magnitude}</span>
+          <span class="tag">${esc(x.horizon || '?')}</span>
+          <span class="tag dom" style="background:${domColor(x.domain)}">${esc(x.domain_label)}</span>
+        </div>
+        <div class="art-title" style="cursor:pointer" onclick="showArtifact(${x.id})">${esc(x.title)}</div>
+        <div style="color:var(--text3);font-size:11px;margin-top:5px">${esc(x.source || '')}</div>
+      </div>`).join('')}</div>` : `<div class="banner info"><i class="fas fa-info"></i>
+      <span>No artifact carries a directional claim yet. Without magnitude and horizon a document
+      is background: it cannot anchor a transmission chain.</span></div>`}
+
+    <div class="card">
+      <h3><i class="fas fa-layer-group"></i> Coverage by domain</h3>
+      <div class="grid c3">
+        ${s.domains.map(d => `<div class="domain-card ${d.artifacts ? '' : 'empty-domain'}">
+          <div class="domain-name"><span class="dot" style="background:${d.color}"></span>
+            ${esc(d.label)}</div>
+          <div class="domain-role">${d.artifacts ? `${d.artifacts} artifact(s) · ${d.accepted} accepted` : 'no evidence'}${d.hub ? ' · hub' : ''}</div>
+          <div class="domain-bar"><i style="width:${Math.min(100, d.artifacts * 20)}%;background:${d.color}"></i></div>
+          ${d.top.length ? `<div class="domain-top">${d.top.map(t =>
+            `<a onclick="showArtifact(${t.id})" title="${esc(t.title)}">
+              ${t.direction ? `<span style="color:var(--${t.direction === 'up' ? 'green' : 'red'})">${t.direction === 'up' ? '▲' : '▼'}</span>` : ''}
+              ${esc(t.title.slice(0, 64))}</a>`).join('')}</div>` : ''}
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="grid c2">
+      <div class="card"><h3><i class="fas fa-file-lines"></i> Brief</h3>
+        <p style="color:var(--text2);font-size:13px;line-height:1.7">${esc(s.brief.description || '—')}</p>
+        <div class="meta-strip" style="margin-top:12px">
+          <span class="tag">${esc(s.brief.keywords || '—')}</span>
+          ${s.brief.driver ? `<span class="tag" style="color:var(--purple)">${esc(State.taxonomies.drivers[s.brief.driver]?.label || s.brief.driver)}</span>` : ''}
+        </div>
+        ${s.brief.shock ? `<div class="gap-query">${esc(s.brief.shock)}</div>` : ''}</div>
+      <div class="card"><h3><i class="fas fa-chart-pie"></i> Work done</h3>
+        <table class="tbl"><tbody>
+          <tr><td>Runs</td><td style="text-align:right">${s.runs}</td></tr>
+          <tr><td>Explanations</td><td style="text-align:right">${s.explanations}</td></tr>
+          <tr><td>Rejected</td><td style="text-align:right">${s.counts.rejected}</td></tr>
+          <tr><td>Drift flagged</td><td style="text-align:right">${s.counts.drift}</td></tr>
+        </tbody></table>
+        <div style="margin-top:14px;display:flex;gap:9px;flex-wrap:wrap">
+          <button class="btn sm" onclick="showSummaryModal()">Overlay</button>
+          <button class="btn sm" onclick="downloadDossier()">Markdown report</button>
+          <button class="btn sm" onclick="detectDrift()">Detect drift</button>
+        </div></div>
+    </div>`;
+}
+
+async function showSummaryModal() {
+  const s = await api(`/api/investigations/${State.invId}/summary`);
+  openModal('Executive summary — ' + esc(s.title), `
+    <div class="grid c4" style="margin-bottom:16px">
+      <div class="stat"><div class="n">${s.counts.artifacts}</div><div class="l">Artifacts</div></div>
+      <div class="stat"><div class="n">${s.counts.relationships}</div><div class="l">Edges</div></div>
+      <div class="stat"><div class="n">${s.directional_count}</div><div class="l">Directional</div></div>
+      <div class="stat"><div class="n" style="color:var(--orange)">${s.domains.filter(d => !d.artifacts).length}</div><div class="l">Empty domains</div></div>
+    </div>
+    ${s.strongest_signals.length ? `<h4 style="font-size:12px;color:var(--text3);
+      text-transform:uppercase;letter-spacing:.06em;margin-bottom:9px">Strongest signals</h4>
+      ${s.strongest_signals.map(x => `<div class="source-item" style="margin-bottom:7px">
+        <span class="tag ${x.direction}" style="color:var(--${x.direction === 'up' ? 'green' : 'red'})">${x.direction}</span>
+        <span class="tag">${x.magnitude}</span> ${esc(x.title)}
+        <div style="color:var(--text3);font-size:11px;margin-top:4px">${esc(domLabel(x.domain))}</div>
+      </div>`).join('')}` : ''}
+    <div class="banner info" style="margin-top:16px"><i class="fas fa-info"></i>
+      <span>${s.domains.filter(d => !d.artifacts).map(d => esc(d.label)).join(', ') || 'No'} —
+      ${s.domains.filter(d => !d.artifacts).length} domain(s) with no evidence.</span></div>`,
+    `<button class="btn" onclick="closeModal()">Close</button>
+     <button class="btn primary" onclick="closeModal();switchView('gaps')">Work the gaps</button>`);
+}
+
+async function downloadDossier() {
+  try {
+    const res = await fetch(`/api/investigations/${State.invId}/dossier?fmt=markdown`,
+      { headers: { 'X-Econ-Session': SESSION } });
+    const text = await res.text();
+    const blob = new Blob([text], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${State.invId}-report.md`;
+    a.click();
+    toast('Report downloaded.', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function detectDrift() {
+  toast('Re-fetching recent sources…');
+  try {
+    const r = await api(`/api/investigations/${State.invId}/detect-drift?limit=15`,
+      { method: 'POST' });
+    toast(`Checked ${r.checked} source(s); ${r.changed} moved.`, r.changed ? 'ok' : '');
+    await refreshView();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// ---------- agent console ----------
+async function viewConsole(el) {
+  el.className = 'view';
+  const runs = await api(`/api/runs?investigation_id=${State.invId}`);
+  State.runId = runs.runs[0]?.id;
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-terminal"></i> Agent console
+        <span class="sub">live stage-coloured log</span></h3>
+      <div class="field"><label>Run</label>
+        <select id="runSel" onchange="State.runId=parseInt(this.value);loadConsoleLog()">
+          ${runs.runs.map(r => `<option value="${r.id}">#${r.id} — ${r.status} (${r.trigger})
+            ${r.finished_at ? fmtDate(r.finished_at) : ''}</option>`).join('') ||
+            '<option value="">no runs yet</option>'}
+        </select></div>
+      <div id="runPlan"></div>
+      <div class="log" id="log"><div class="empty">No run selected.</div></div>
+    </div>`;
+  await loadConsoleLog();
+}
+
+async function loadConsoleLog() {
+  if (!State.runId) return;
+  const data = await api(`/api/runs/${State.runId}`);
+  const p = data.plan || {};
+  $('#runPlan').innerHTML = p.queries?.length ? `<div class="field">
+    <label>Search plan — ${esc(p.rationale || '')}</label>
+    <div class="gap-query">${p.queries.map(q =>
+      `${esc(q.text)} <span style="color:var(--text3)">via ${(q.sources || []).join(', ')}</span>${
+        q.domain ? ` <span style="color:${domColor(q.domain)}">→ ${esc(domLabel(q.domain))}</span>` : ''}`).join('<br>')}</div></div>` : '';
+  $('#log').innerHTML = (data.events || []).map(e =>
+    `<div class="log-line"><span class="log-stage ${esc(e.stage)}">${esc(e.stage)}</span>
+      <span class="log-msg">${esc(e.message)}</span></div>`).join('') ||
+    '<div class="empty">No events.</div>';
+}
+
+// ---------- timeline ----------
+async function viewTimeline(el) {
+  el.className = 'view';
+  const t = await api(`/api/investigations/${State.invId}/timeline`);
+  const broken = Object.entries(t.verified || {}).filter(([, ok]) => !ok);
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-timeline"></i> Timeline
+        <span class="sub">every ledger chain this investigation touched, interleaved</span></h3>
+      ${broken.length ? `<div class="banner err"><i class="fas fa-triangle-exclamation"></i>
+        <span><strong>${broken.length} chain(s) failed verification:</strong>
+        ${broken.map(([c]) => esc(c)).join(', ')}. The evidence has been altered since it was written.</span></div>`
+        : `<div class="banner ok"><i class="fas fa-shield-halved"></i>
+        <span>All ${Object.keys(t.verified || {}).length} chain(s) re-derive from their stored rows.</span></div>`}
+      <div class="row" style="margin-bottom:12px">
+        <div class="field" style="margin:0"><label>Chain</label>
+          <select id="chainSel" onchange="filterChain()"><option value="">all chains</option>
+            ${t.chains.map(c => `<option value="${c}">${c} ${t.verified[c] === true ? '✓' : '✗'}</option>`).join('')}</select></div>
+      </div>
+      <div class="chain" id="chainList">${t.events.slice(0, 300).map(chainEvent).join('') ||
+        '<div class="empty">Nothing on the chain yet.</div>'}</div>
+    </div>`;
+  State.chainEvents = t.events;
+}
+
+function chainEvent(e) {
+  const cls = e.verdict === 'deny' ? 'deny' : e.severity === 'warn' ? 'flag' : '';
+  return `<div class="chain-event ${cls}" data-run="${esc(e.run_id)}">
+    <div class="top">
+      <span class="seq">#${e.seq}</span>
+      <span class="kind">${esc(e.kind)}</span>
+      <span class="actor">${esc(e.actor)}</span>
+      ${e.verdict ? `<span class="tag" style="color:var(--${e.verdict === 'deny' ? 'red' : e.verdict === 'flag' ? 'orange' : 'green'})">${esc(e.verdict)}</span>` : ''}
+      <span style="color:var(--text3);font-size:11px">${esc(e.ts)}</span>
+      <span class="hash" title="${esc(e.hash)}">${esc(e.hash.slice(0, 10))}…</span>
+    </div>
+    <details><summary style="cursor:pointer;font-size:11px;color:var(--text3)">data</summary>
+      <div class="data">${esc(JSON.stringify(e.data, null, 2))}</div>
+      <div style="color:var(--text3);font-size:10px;margin-top:5px">
+        prev ${esc((e.prev_hash || '').slice(0, 16))}… → ${esc(e.hash.slice(0, 16))}…</div>
+    </details></div>`;
+}
+
+function filterChain() {
+  const v = $('#chainSel').value;
+  $$('#chainList .chain-event').forEach(el => {
+    el.style.display = !v || el.dataset.run === v ? '' : 'none';
+  });
+}
+
+// ---------- audit ledger ----------
+async function viewAudit(el) {
+  el.className = 'view';
+  const [integrity, runs] = await Promise.all([
+    api('/api/ledger/integrity-monitor?limit=25'),
+    api('/api/ledger/runs?limit=25'),
+  ]);
+  State.ledgerRuns = runs.runs;
+  el.innerHTML = `
+    <div class="card">
+      <h3><i class="fas fa-shield-halved"></i> Chain integrity
+        <span class="sub">every hash re-derived from stored rows — nothing is trusted on read</span></h3>
+      ${integrity.broken.length ? `<div class="banner err"><i class="fas fa-triangle-exclamation"></i>
+        <span><strong>${integrity.broken.length} chain(s) broken:</strong>
+        ${integrity.broken.map(b => esc(b.run_id) + ' (' + (b.problems[0]?.problem || '?') + ')').join(', ')}</span></div>`
+        : `<div class="banner ok"><i class="fas fa-check"></i>
+        <span><strong>${integrity.healthy}/${integrity.checked}</strong> chains verify.
+        ${integrity.audit_drops ? `<strong>${integrity.audit_drops}</strong> dropped audit writes — a chain can verify perfectly while the recorder has been failing.` : 'No dropped audit writes.'}</span></div>`}
+      <div class="grid c3" style="margin-top:14px">
+        <div class="stat"><div class="n" style="color:var(--green)">${integrity.healthy}</div><div class="l">Verified chains</div></div>
+        <div class="stat"><div class="n" style="color:var(--red)">${integrity.broken.length}</div><div class="l">Broken</div></div>
+        <div class="stat"><div class="n" style="color:var(--${integrity.audit_drops ? 'orange' : 'text'})">${integrity.audit_drops}</div><div class="l">Audit drops</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><i class="fas fa-link"></i> Chains</h3>
+      <div class="field"><label>Run</label>
+        <select id="ledgerSel" onchange="loadChain()"><option value="">select a chain…</option>
+          ${runs.runs.map(r => `<option value="${r.id}">${esc(r.label || r.id)} — ${r.events} events</option>`).join('')}</select></div>
+      <div id="chainDetail"><div class="empty">Pick a chain to verify and read it.</div></div>
+    </div>`;
+  $('#auditCount').textContent = integrity.healthy;
+}
+
+async function loadChain() {
+  const id = $('#ledgerSel').value;
+  if (!id) return;
+  const data = await api('/api/ledger/runs/' + id);
+  const v = data.verified || {};
+  $('#chainDetail').innerHTML = `
+    <div class="banner ${v.ok ? 'ok' : 'err'}" style="margin-bottom:12px">
+      <i class="fas fa-${v.ok ? 'check' : 'triangle-exclamation'}"></i>
+      <span>${v.ok ? `Verified — ${v.events} events re-derive from the genesis hash.`
+        : 'Verification failed: ' + (v.problems || []).map(p => `${p.problem} at seq ${p.seq}`).join('; ')}
+      ${v.proof_drift ? ` ${v.proof_drift} proof(s) drifted.` : ''}
+      ${v.unknown_kinds?.length ? ` Unknown kinds: ${v.unknown_kinds.join(', ')}.` : ''}</span></div>
+    <div style="margin-bottom:12px;display:flex;gap:9px;flex-wrap:wrap">
+      <button class="btn sm" onclick="exportChain('${id}')"><i class="fas fa-file-export"></i> Export self-verifying bundle</button>
+    </div>
+    <div class="chain">${data.events.slice(0, 200).map(chainEvent).join('')}</div>`;
+}
+
+async function exportChain(id) {
+  const doc = await api(`/api/ledger/runs/${id}/export`);
+  const res = await fetch('/api/ledger/verify-export', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(doc),
+  });
+  const verdict = await res.json();
+  const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${id}-audit.json`;
+  a.click();
+  toast(verdict.ok
+    ? 'Bundle exported. It verifies offline with no database attached.'
+    : 'Exported, but the offline check failed: ' + JSON.stringify(verdict.problems),
+    verdict.ok ? 'ok' : 'err');
+}
+
+// ==========================================================================
+// Run control
+// ==========================================================================
+async function startRun() {
+  if (!State.invId) return;
+  try {
+    const r = await api(`/api/investigations/${State.invId}/run`,
+      { method: 'POST', body: JSON.stringify({ max_items: 25, max_rounds: 2 }) });
+    toast('Queued. Watch the console.', 'ok');
+    switchView('console');
+    startPolling();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function showScheduleModal() {
+  const inv = currentInv();
+  openModal('Schedule — ' + esc(inv.title), `
+    <div class="field"><label>Cron expression (five fields, UTC)</label>
+      <input type="text" id="cron" value="${esc(inv.schedule_cron || '0 7 * * *')}">
+      <div style="font-size:11.5px;color:var(--text3);margin-top:6px">
+        Common: <code>0 7 * * *</code> daily · <code>0 7 * * 1</code> weekly ·
+        <code>0 7 1 * *</code> monthly. Validated before it is saved — a timetable that
+        fails to parse is reported here, not discovered weeks later.</div></div>
+    <div class="row">
+      <div class="field"><label>Max artifacts per run</label>
+        <input type="number" id="maxItems" value="${inv.schedule_max_items || 25}" min="1" max="200"></div>
+      <div class="field"><label>Max rounds</label>
+        <input type="number" id="maxRounds" value="${inv.schedule_max_rounds || 2}" min="1" max="6"></div>
+    </div>
+    <label style="display:flex;gap:9px;align-items:center;cursor:pointer;color:var(--text)">
+      <input type="checkbox" id="schedOn" ${inv.schedule_enabled ? 'checked' : ''} style="width:auto">
+      Run on this schedule</label>`,
+    `<button class="btn" onclick="closeModal()">Cancel</button>
+     <button class="btn primary" onclick="saveSchedule()">Save</button>`);
+}
+
+async function saveSchedule() {
+  try {
+    const r = await api(`/api/investigations/${State.invId}/schedule`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        enabled: $('#schedOn').checked, cron: $('#cron').value.trim(),
+        max_items: parseInt($('#maxItems').value), max_rounds: parseInt($('#maxRounds').value),
+      }),
+    });
+    closeModal();
+    await loadInvestigations();
+    toast(r.enabled ? `Scheduled. Next run ${fmtDate(r.next_run_at)}.` : 'Schedule cleared.', 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function showTaxonomyModal() {
+  const T = State.taxonomies;
+  const bySrc = {};
+  T.channels.forEach(c => (bySrc[c.src] ||= []).push(c));
+  openModal('Domain taxonomy', `
+    <p style="color:var(--text2);font-size:12.5px;margin-bottom:16px;line-height:1.7">
+      Ten domains plus the channels between them. A domain is a label; a channel is a
+      mechanism with a typical lag. The transmission walk
+      (<code>/api/transmission/{id}</code>) is a <em>prior</em> — a run's evidence either
+      supports each hop or does not, and the graph only draws an edge when two documents
+      actually share an actor.</p>
+    <div class="grid c2">
+      ${T.domains.map(d => `<div class="domain-card">
+        <div class="domain-name"><span class="dot" style="background:${d.color}"></span>
+          ${d.label} ${d.hub ? '<span class="tag" style="color:var(--purple)">hub</span>' : ''}</div>
+        <div style="font-size:11.5px;color:var(--text2);margin-top:5px;line-height:1.55">${d.blurb}</div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:7px">
+          ${d.in_degree} inbound · ${d.out_degree} outbound channels</div>
+        ${(bySrc[d.id] || []).slice(0, 5).map(c => `<div style="font-size:11px;margin-top:4px">
+          <span style="color:${domColor(c.dst)}">→ ${domLabel(c.dst)}</span>
+          <span style="color:var(--text2)"> ${c.channel}</span>
+          <span style="color:var(--text3)"> (${c.strength}, ${c.lag}q)</span></div>`).join('')}
+      </div>`).join('')}
+    </div>
+    <h4 style="font-size:12px;color:var(--text3);text-transform:uppercase;
+      letter-spacing:.06em;margin:20px 0 9px">Drivers</h4>
+    <table class="tbl"><thead><tr><th>Driver</th><th>Domains</th><th>Lag</th><th>Description</th></tr></thead>
+      <tbody>${Object.entries(T.drivers).map(([k, v]) => `<tr>
+        <td><strong>${v.label}</strong></td>
+        <td>${v.domains.map(d => `<span class="dot" style="background:${domColor(d)};margin-right:3px"></span>${domLabel(d)}`).join(' ')}</td>
+        <td>${v.typical_lag}q</td><td style="color:var(--text2)">${v.description}</td></tr>`).join('')}
+      </tbody></table>`,
+    `<button class="btn primary" onclick="closeModal()">Close</button>`);
+}
+
+// ==========================================================================
+// Header status
+// ==========================================================================
+async function refreshStatus() {
+  try {
+    const h = await api('/api/health');
+    const llm = h.llm || {};
+    const pill = $('#llmPill');
+    pill.className = 'pill ' + (llm.reachable ? (llm.fallback_active ? 'warn' : 'ok') : 'err');
+    pill.innerHTML = llm.reachable
+      ? `<i class="fas fa-microchip"></i> ${llm.model}${llm.fallback_active ? ' (fallback)' : ''}`
+      : `<i class="fas fa-plug-circle-xmark"></i> no gateway`;
+    pill.title = llm.notice || `Gateway: ${llm.served_by || llm.base_url}`;
+
+    const jobs = h.jobs || {};
+    const q = $('#queuePill');
+    const active = (jobs.running || 0) + (jobs.queued || 0);
+    q.className = 'pill ' + (active ? 'busy' : '');
+    q.innerHTML = `<i class="fas fa-list-check"></i> ${active} queued`;
+    q.title = JSON.stringify(jobs);
+  } catch (e) { $('#llmPill').className = 'pill err'; $('#llmPill').textContent = 'offline'; }
+}
+
+async function updateBadges() {
+  if (!State.invId) return;
+  try {
+    const inv = await api('/api/investigations/' + State.invId);
+    $('#pendingCount').textContent = inv.counts.pending;
+    const invRow = State.investigations.find(i => i.id === State.invId);
+    if (invRow) invRow.counts = inv.counts;
+    renderSidebar();
+  } catch (e) {}
+}
+
+// ==========================================================================
+// Polling: only while there is work, and only for the view that needs it
+// ==========================================================================
+function startPolling() {
+  if (State.timer) return;
+  State.timer = setInterval(async () => {
+    refreshStatus();
+    if (!State.invId) return;
+    try {
+      const jobs = await api('/api/jobs');
+      const busy = (jobs.counts.running || 0) + (jobs.counts.queued || 0);
+      if (!busy) {
+        clearInterval(State.timer);
+        State.timer = null;
+        await loadInvestigations();
+        await refreshView();
+        updateBadges();
+        toast('Work finished.', 'ok');
+        return;
+      }
+      if (State.view === 'console') await loadConsoleLog();
+      updateBadges();
+    } catch (e) {}
+  }, 1800);
+}
+
+function openModal(title, body, foot = '') {
+  $('#modalTitle').innerHTML = title;
+  $('#modalBody').innerHTML = body;
+  $('#modalFoot').innerHTML = foot;
+  $('#modalBack').classList.add('open');
+}
+function closeModal() { $('#modalBack').classList.remove('open'); }
+
+// ==========================================================================
+// Boot
+// ==========================================================================
+$('#themeBtn').onclick = () => {
+  document.documentElement.classList.toggle('light');
+  localStorage.setItem('econ-theme', document.documentElement.classList.contains('light') ? 'light' : 'dark');
+  if (State.graph) drawGraph(State.graph);
+};
+$('#taxBtn').onclick = showTaxonomyModal;
+$('#modalBack').onclick = (e) => { if (e.target.id === 'modalBack') closeModal(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+(async function boot() {
+  try {
+    await loadTaxonomies();
+    await loadInvestigations();
+    await refreshStatus();
+    setInterval(refreshStatus, 15000);
+    await refreshView();
+    await updateBadges();
+    // Pick up work that was already queued when the page loaded.
+    const jobs = await api('/api/jobs');
+    if ((jobs.counts.running || 0) + (jobs.counts.queued || 0)) startPolling();
+  } catch (e) {
+    $('#view').innerHTML = `<div class="banner err"><i class="fas fa-triangle-exclamation"></i>
+      <span>Could not start: ${esc(e.message)}. Is the API running on :8304?</span></div>`;
+  }
+})();
+</script>
+</body>
+</html>
