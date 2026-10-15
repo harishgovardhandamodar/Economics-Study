@@ -718,7 +718,6 @@ function applyGraphFilters() {
   $('#graphToolbar').innerHTML =
     `<span class="pill">${keep.size}/${all.size} nodes</span>
      ${State.domains.size ? '<button class="icon-btn" onclick="State.domains.clear();applyGraphFilters();renderLegend()">clear filters</button>' : ''}`;
-  $('#graphStats').textContent = `${keep.size}/${all.size} nodes`;
 }
 
 // ---------- artifacts ----------
@@ -1551,8 +1550,8 @@ async function viewSummary(el) {
           <button class="btn sm" onclick="showSummaryModal()">Overlay</button>
           <button class="btn sm" onclick="downloadDossier()">Markdown report</button>
           <button class="btn sm" onclick="downloadFile(
-            `/api/investigations/${State.invId}/dossier/pdf`,
-            `${State.invId}-report.pdf`, 'Report PDF downloaded.')">PDF report</button>
+            '/api/investigations/' + State.invId + '/dossier/pdf',
+            State.invId + '-report.pdf', 'Report PDF downloaded.')">PDF report</button>
           <button class="btn sm" onclick="detectDrift()">Detect drift</button>
         </div></div>
     </div>`;
@@ -1955,8 +1954,14 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
     const jobs = await api('/api/jobs');
     if ((jobs.counts.running || 0) + (jobs.counts.queued || 0)) startPolling();
   } catch (e) {
+    // A failed fetch means the API is down; anything else means the API
+    // answered and a view failed to render. Blaming the API for a render
+    // error sends the operator debugging the wrong half of the system.
+    const apiDown = /fetch|network|load failed|http/i.test(e.message || '');
     $('#view').innerHTML = `<div class="banner err"><i class="fas fa-triangle-exclamation"></i>
-      <span>Could not start: ${esc(e.message)}. Is the API running on :8304?</span></div>`;
+      <span>Could not start: ${esc(e.message)}. ${
+        apiDown ? 'Is the API reachable at this host and port?'
+                : 'The API responded — a view failed to render. Open the browser console for the stack.'}</span></div>`;
   }
 })();
 </script>
