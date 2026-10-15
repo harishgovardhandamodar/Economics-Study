@@ -1,0 +1,14 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+sqlalchemy==2.0.36
+feedparser==6.0.11
+requests==2.32.3
+httpx==0.28.1
+beautifulsoup4==4.12.3
+pypdf==6.19.0
+apscheduler==3.10.4
+croniter==2.0.1
+reportlab==4.2.2
+pillow==11.3.0
+rich==15.0.0
+click==8.5.0

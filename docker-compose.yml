@@ -1,0 +1,38 @@
+services:
+  # Economics Cross-Domain Knowledge Mapper: FastAPI + vanilla-JS GUI.
+  #   GUI -> http://<host>:8310/
+  #   API -> http://<host>:8310/api/...
+  econ-mapper:
+    build: .
+    container_name: economics-mapper
+    ports:
+      # Host 8310: dev server holds 8304 on this machine. The container itself
+      # listens on 8304; override with HOST_PORT=xxxx.
+      - "${HOST_PORT:-8310}:8304"
+    environment:
+      # LLM inference routes to the fox-services gateway on the host.
+      # Inside the container localhost is the container itself, so the host
+      # gateway is reached via host.docker.internal (see extra_hosts).
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://host.docker.internal:8210/v1}
+      - LLM_FALLBACK_URL=${LLM_FALLBACK_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-qwen3.8:27b}
+      - LLM_FALLBACK_MODEL=${LLM_FALLBACK_MODEL:-qwen3.8:27b}
+      - LLM_TIMEOUT_S=${LLM_TIMEOUT_S:-180}
+      - LLM_CONNECT_TIMEOUT_S=${LLM_CONNECT_TIMEOUT_S:-5}
+      - ECON_SCHEDULER_ENABLED=${ECON_SCHEDULER_ENABLED:-1}
+      - ECON_JOB_LEASE_S=${ECON_JOB_LEASE_S:-900}
+    volumes:
+      - econ_data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      # /api/health is the same endpoint the GUI's top-bar indicator polls.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8304/api/health')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+volumes:
+  econ_data:

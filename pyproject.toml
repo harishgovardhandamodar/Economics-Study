@@ -1,0 +1,40 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-q --tb=short"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = [
+  ".git",
+  "__pycache__",
+  ".venv",
+  "data",
+  "static",
+  "graft",
+  "tests",
+  "scripts",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+  # FastAPI's whole idiom is a call in a default argument
+  # (`body: X = Body(default=X())`). Flagging it would mean either abandoning
+  # the framework's style or annotating away every route signature.
+  "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on shapes the linter cannot see: fixtures build dicts to match
+# an API contract, and shadowing names is how a test stays readable.
+"tests/*" = ["E501", "B017", "F811"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
