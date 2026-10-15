@@ -703,3 +703,24 @@ def test_imported_rows_are_searchable_without_reindex(client):
     r = client.get("/api/search/all?q=unobtanium").json()
     assert r["results"]
     assert r["results"][0]["doc_type"] == "explanation"
+
+
+def test_imported_chats_cannot_enter_the_repo():
+    """Imported chats live in the database (gitignored), never in the tree.
+
+    This pins three things: data/ is ignored, no database file is tracked,
+    and no Takeout-shaped archive sits in the repo as a fixture. A future
+    test that commits a real export as a fixture fails here first.
+    """
+    import pathlib
+    import subprocess
+    root = pathlib.Path(__file__).parent.parent
+    gitignore = (root / ".gitignore").read_text()
+    assert "data/" in gitignore.split()
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=root, capture_output=True, text=True,
+        check=True).stdout.splitlines()
+    assert not [f for f in tracked if f.endswith(".db")], "database tracked"
+    assert not [f for f in tracked
+                if f.endswith(".zip") and "test" not in f], "archive tracked"
+    assert "data/econ.db" not in tracked
