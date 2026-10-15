@@ -58,3 +58,7 @@ def test_top_level_app_switcher():
     assert "State.app === 'design'" in html
     # The per-investigation tab row hides outside the mapper.
     assert "tabs.style.display" in html
+    # The sidebar is Mapper-only: estate apps get the full width.
+    assert 'id="sidebar"' in html
+    assert "side.style.display" in html
+    assert "classList.toggle('single'" in html

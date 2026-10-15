@@ -31,6 +31,7 @@ button{cursor:pointer}
 /* ---------- layout ---------- */
 .layout{display:grid;grid-template-columns:330px 1fr;grid-template-rows:auto 1fr;
   height:100vh;overflow:hidden}
+.layout.single{grid-template-columns:1fr}
 .header{grid-column:1/-1;padding:12px 20px;background:var(--bg2);
   border-bottom:1px solid var(--border);display:flex;align-items:center;
   justify-content:space-between;gap:16px}
@@ -360,8 +361,8 @@ table.tbl tr:hover td{background:var(--bg2)}
     </div>
   </div>
 
-  <!-- ============ SIDEBAR ============ -->
-  <div class="sidebar">
+  <!-- ============ SIDEBAR (Mapper only) ============ -->
+  <div class="sidebar" id="sidebar">
     <div class="side-section">
       <div class="side-title">
         <span>Investigations</span>
@@ -656,6 +657,11 @@ function switchApp(app) {
   $$('.app-btn').forEach(b => b.classList.toggle('active', b.dataset.app === app));
   const tabs = $('#tabs');
   if (tabs) tabs.style.display = app === 'mapper' ? '' : 'none';
+  // The sidebar lists investigations, which only the Mapper acts on. Estate
+  // apps get the full width instead of a panel that does nothing for them.
+  const side = $('#sidebar');
+  if (side) side.style.display = app === 'mapper' ? '' : 'none';
+  document.querySelector('.layout').classList.toggle('single', app !== 'mapper');
   refreshView();
 }
 
