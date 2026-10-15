@@ -411,3 +411,130 @@ def test_thread_graph_without_citations_still_graphs(client):
     g = client.get(f"/api/explanations/{root['id']}/graph").json()
     assert g["counts"] == {"messages": 1, "artifacts": 0, "web": 0}
     assert g["edges"] == []
+
+
+def test_import_qwen_style_message_array(client):
+    """Qwen-style export: conversations of role/content turns pair in order,
+    multi-turn preserved, trailing question stays answerable."""
+    import json as _json
+    payload = _json.dumps({"conversations": [{
+        "title": "Tariffs and freight",
+        "messages": [
+            {"role": "user", "content": "Will new tariffs raise CPI?"},
+            {"role": "assistant", "content": "Yes, via import prices."},
+            {"role": "user", "content": "What about Suez freight?"},
+            {"role": "assistant", "content": "Freight follows with a lag."},
+            {"role": "user", "content": "And sovereign issuance?"},
+        ]}]}).encode()
+    r = _upload(client, payload).json()
+    assert r["created"] == 3 and r["skipped"] == 0
+    qs = {t["question"] for t in
+          client.get("/api/ask/threads").json()["threads"]}
+    assert {"Will new tariffs raise CPI?",
+            "What about Suez freight?",
+            "And sovereign issuance?"} <= qs
+    answered = [t for t in client.get("/api/ask/threads").json()["threads"]
+                if t["question"] == "Will new tariffs raise CPI?"][0]
+    assert answered["status"] == "imported"
+    assert client.get(f"/api/explanations/{answered['id']}").json()["answer"]
+    trailing = [t for t in client.get("/api/ask/threads").json()["threads"]
+                if t["question"] == "And sovereign issuance?"][0]
+    assert client.get(f"/api/explanations/{trailing['id']}").json()["answer"] == ""
+
+
+def test_import_openai_parts_and_role_variants(client):
+    import json as _json
+    payload = _json.dumps({"chats": [{
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "human",
+             "content": [{"type": "text", "text": "ECB rate path?"}]},
+            {"role": "ai",
+             "content": [{"type": "text", "text": "On hold."},
+                         {"type": "image_url", "image_url": {"url": "x"}}]},
+            {"role": "assistant", "content": "Orphan with no question."},
+        ]}]}).encode()
+    r = _upload(client, payload).json()
+    # System instructions never import; the orphan assistant turn has no
+    # question to attribute it to; image parts contribute no text.
+    assert r["created"] == 1
+    t = client.get("/api/ask/threads").json()["threads"][0]
+    assert t["question"] == "ECB rate path?"
+    assert "Monetary policy" in t["tags"]
+
+
+def test_import_chatgpt_mapping(client):
+    import json as _json
+    payload = _json.dumps([{
+        "title": "Debt talk",
+        "mapping": {
+            "a": {"message": {"author": {"role": "system"},
+                              "content": {"parts": ["sys"]}}},
+            "b": {"message": {"author": {"role": "user"},
+                              "content": {"parts": ["US debt service?"]},
+                              "create_time": 1750000000}},
+            "c": {"message": {"author": {"role": "assistant"},
+                              "content": {"parts": ["Rising."]}}},
+            "d": {"nope": True},
+        }}]).encode()
+    r = _upload(client, payload).json()
+    assert r["created"] == 1 and r["answered"] == 1
+    t = client.get("/api/ask/threads").json()["threads"][0]
+    assert t["question"] == "US debt service?"
+
+
+def test_import_markdown_transcript(client):
+    md = (b"# Freight chat\n\nSome intro prose.\n\n## User\n\n"
+          b"Will tariffs raise CPI?\n\n## Assistant\n\nYes, via import prices.\n\n"
+          b"## User\n\nAnd Suez?\n")
+    r = _upload(client, md, filename="chat.md").json()
+    assert r["created"] == 2
+    prose = _upload(client, b"# Notes\n\nJust some prose.\n",
+                    filename="notes.md").json()
+    assert prose["created"] == 0 and prose["skipped"] == 1
+
+
+def test_import_zip_archive(client):
+    """A Takeout .zip unpacks server-side: JSON + HTML members merge, junk
+    members ignored, counts honest."""
+    import io
+    import json as _json
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Takeout/Search/MyActivity.json", _json.dumps([
+            {"title": "Searched for ECB rate path",
+             "titleUrl": "https://www.google.com/search?q=ECB+rate+path"}]))
+        zf.writestr("Takeout/Search/activity.html",
+                    "<html><body><div>Searched for "
+                    '<a href="https://www.google.com/search?q=suez+canal+freight">suez…</a>'
+                    "<br>Sep 1, 2026, 10:00 AM</div></body></html>")
+        zf.writestr("avatar.png", b"\x89PNG" + b"\x00" * 100)
+    r = _upload(client, buf.getvalue(), filename="takeout.zip").json()
+    assert r["created"] == 2 and r["skipped"] == 0
+    qs = {t["question"] for t in
+          client.get("/api/ask/threads").json()["threads"]}
+    assert "ECB rate path" in qs
+    suez = [t for t in client.get("/api/ask/threads").json()["threads"]
+            if "suez" in t["question"].lower()][0]
+    assert "Monetary policy" in suez["tags"] or "Suez Canal" in suez["tags"]
+    assert client.post("/api/ask/import",
+                       files={"file": ("x.zip", b"not a zip")}).json()["created"] == 0
+    empty = io.BytesIO()
+    with zipfile.ZipFile(empty, "w") as zf:
+        zf.writestr("photo.jpg", b"\xff\xd8" + b"\x00" * 10)
+    assert _upload(client, empty.getvalue(),
+                   filename="photos.zip").json()["created"] == 0
+
+
+def test_import_takeout_html(client):
+    html = (b"<html><body>"
+            b'<div class="x">Searched for <a href="https://www.google.com/search?q=tether+reserve+attestation">tether&#8230;</a>'
+            b"<br>Sep 2, 2026, 3:04:05 PM</div>"
+            b'<div><a href="https://example.com/about">About</a></div>'
+            b"</body></html>")
+    r = _upload(client, html, filename="MyActivity.html").json()
+    assert r["created"] == 1
+    t = client.get("/api/ask/threads").json()["threads"][0]
+    assert t["question"] == "tether reserve attestation"
+    assert "Stablecoins" in t["tags"]

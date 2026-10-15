@@ -186,6 +186,11 @@ def _domains_in_text(text: str) -> set[str]:
         if label in t or (len(stem) > 4 and stem in t):
             out.update(dom for dom in d["domains"] if dom in D.DOMAINS)
 
+    # Institutions imply their domain: "ECB rate path" is monetary policy
+    # without naming it. Without this, acronym-led questions retrieve nothing
+    # from the domain they are actually about.
+    out.update(D.alias_domains(text))
+
     for c in D.CHANNELS:
         first = c["channel"].split()[0].lower()
         if len(first) > 3 and first in t:

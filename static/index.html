@@ -1617,17 +1617,21 @@ async function viewAsk(el) {
       <div class="row" style="margin-bottom:10px">
         <div class="field" style="margin:0;flex:1"><label>Group</label>
           <select id="askGroup" onchange="loadAskThreads()"><option value="">All groups</option></select></div>
-        <div class="field" style="margin:0;flex:2"><label>Import Google AI Mode / Takeout history</label>
+        <div class="field" style="margin:0;flex:2"><label>Import history — Takeout ZIP/HTML/JSON, Qwen / ChatGPT export, Markdown, text</label>
           <div style="display:flex;gap:8px">
-            <input type="file" id="askFile" accept=".json,.txt,.csv"
-              style="padding:6px" title="Takeout Search JSON, Q&A JSON, or one query per line">
+            <input type="file" id="askFile" accept=".zip,.json,.html,.htm,.txt,.md,.markdown,.csv"
+              style="padding:6px" title="Takeout archive (.zip) or activity HTML, chat export JSON, Markdown transcript, or one query per line">
             <button class="btn sm" onclick="importHistory()">Import</button>
           </div></div>
       </div>
       <div style="font-size:11px;color:var(--text3);margin-bottom:10px">
-        Takeout Search JSON, conversation JSON, or plain one-query-per-line text.
-        Imports are tagged and grouped from their content, deduplicated, and left
-        unanswered until you press Answer — imported text is never evidence until then.</div>
+        A Takeout <strong>.zip</strong> is unpacked server-side (JSON, HTML,
+        Markdown and text members parsed, capped against zip bombs); an extracted
+        <strong>activity .html</strong> reads search anchors plus their timestamps.
+        Qwen-style message arrays, ChatGPT mapping exports, Q&A JSON and Markdown
+        User/Assistant transcripts all import. Imports are tagged and grouped
+        from their content, deduplicated, and left unanswered until you press
+        Answer — imported text is never evidence until then.</div>
       <div id="askImportStatus"></div>
       <div id="askThreads"><div class="empty">Loading…</div></div>
     </div>

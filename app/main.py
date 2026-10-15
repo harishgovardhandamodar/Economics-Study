@@ -2046,14 +2046,17 @@ def ask_threads(investigation_id: int | None = None, limit: int = 30,
 
 @app.post("/api/ask/import")
 async def ask_import(request: Request, db: Session = Depends(get_db)):
-    """Import a Google AI Mode / Takeout history export as tagged threads.
+    """Import a Google AI Mode / Takeout / chat-export history as threads.
 
     Accepts Takeout Search JSON (title/titleUrl), query objects, Q&A
-    conversation pairs, or plain one-query-per-line text — anything else in
-    the file is counted in ``skipped``, never fatal. Every stored question is
-    tagged and grouped from its own content (domains, named actors, drivers),
-    deduplicated against the archive, and left unanswered until asked:
-    imported answers are stored verbatim and never auto-saved to the graph.
+    conversation pairs, full message-array conversations (Qwen-style
+    ``messages``, ChatGPT ``mapping``, OpenAI parts), Markdown transcripts
+    with User/Assistant sections, or plain one-query-per-line text — anything
+    else in the file is counted in ``skipped``, never fatal. Every stored
+    question is tagged and grouped from its own content (domains, named
+    actors, drivers), deduplicated against the archive, and left unanswered
+    until asked: imported answers are stored verbatim and never auto-saved
+    to the graph.
     """
     from . import ask as _ask
     try:

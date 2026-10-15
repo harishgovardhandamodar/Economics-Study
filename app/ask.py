@@ -491,14 +491,129 @@ _TAG_DISPLAY = {
 def parse_history_file(content: bytes, filename: str = "") -> dict:
     """Parse an exported history file into [{question, answer, asked_at}].
 
-    Accepts Takeout Search JSON (title/titleUrl with q=), query objects,
-    Q&A conversation pairs, and plain one-query-per-line text. Anything
-    unrecognised is counted in ``skipped``, never fatal.
+    Accepts Takeout Search JSON (title/titleUrl with q=), Takeout activity
+    HTML (search anchors + nearby timestamps), ZIP archives of any of these,
+    query objects, Q&A conversation pairs, full message-array conversations
+    (Qwen-style ``messages``, ChatGPT ``mapping``, OpenAI parts), Markdown
+    transcripts with User/Assistant sections, and plain one-query-per-line
+    text. Anything unrecognised is counted in ``skipped``, never fatal.
     """
+    name = (filename or "").lower()
+    if name.endswith(".zip"):
+        return _parse_zip(content or b"")
+    return _parse_content(content or b"", filename)
+
+
+ZIP_MAX_FILES = 200
+ZIP_MAX_BYTES = 50_000_000
+
+
+def _parse_zip(content: bytes) -> dict:
+    """Unpack a Takeout-style archive and parse every history file inside.
+
+    Guarded twice against zip bombs (member count and total uncompressed
+    bytes) because the file comes from outside and its size claims are
+    attacker-controlled. Members that are not history formats are ignored
+    silently — a Takeout zip also carries avatars and PDFs nobody asked to
+    import.
+    """
+    import io
+    import zipfile
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except Exception:
+        return {"items": [], "skipped": 1, "reason": "not a readable zip"}
+    items: list[dict] = []
+    skipped = files = total = 0
+    for info in zf.infolist():
+        member = info.filename
+        if member.endswith("/") or member.startswith("__MACOSX/"):
+            continue
+        if not member.lower().endswith(
+                (".json", ".html", ".htm", ".md", ".markdown", ".txt")):
+            continue
+        if files >= ZIP_MAX_FILES or total >= ZIP_MAX_BYTES:
+            skipped += 1
+            continue
+        try:
+            data = zf.read(info)
+        except Exception:
+            skipped += 1  # encrypted or corrupt member
+            continue
+        total += len(data)
+        if total > ZIP_MAX_BYTES:
+            skipped += 1
+            continue
+        sub = _parse_content(data, member)
+        items.extend(sub["items"])
+        skipped += sub["skipped"]
+        files += 1
+    if not items and not files:
+        return {"items": [], "skipped": skipped,
+                "reason": "no history files inside (JSON, HTML, Markdown, text)"}
+    out = {"items": items, "skipped": skipped, "files": files}
+    return out
+
+
+def _parse_takeout_html(text: str) -> dict:
+    """Takeout activity HTML: search anchors plus nearby timestamps.
+
+    A My Activity export renders each record as an anchor (the query, with
+    the exact text in the ``q=`` param) inside a block that also carries the
+    timestamp. The query comes from the param rather than the anchor text
+    because titles are truncated ("Searched for…") while the param is exact.
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(text or "", "html.parser")
+    items: list[dict] = []
+    skipped = 0
+    from urllib.parse import parse_qs, unquote_plus, urlparse
+    for a in soup.find_all("a", href=True):
+        try:
+            qs = parse_qs(urlparse(str(a["href"])).query)
+        except Exception:
+            skipped += 1
+            continue
+        raw = (qs.get("q") or [None])[0]
+        if not raw:
+            continue  # nav link, not a search record
+        try:
+            question = unquote_plus(raw).strip()
+        except Exception:
+            skipped += 1
+            continue
+        if not question:
+            skipped += 1
+            continue
+        when = None
+        node = a.parent
+        for _ in range(4):
+            if node is None:
+                break
+            m = re.search(
+                r"[A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4},?\s+"
+                r"\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?",
+                node.get_text(" ", strip=True))
+            if m:
+                when = m.group(0)
+                break
+            node = node.parent
+        items.append({"question": question[:2000], "answer": None,
+                      "asked_at": when})
+    return {"items": items, "skipped": skipped}
+
+
+def _parse_content(content: bytes, filename: str = "") -> dict:
     name = (filename or "").lower()
     text = (content or b"").decode("utf-8", errors="replace")
     items: list[dict] = []
     skipped = 0
+    if name.endswith((".md", ".markdown")):
+        got, missed = _parse_markdown_conversation(text)
+        return {"items": got, "skipped": missed}
+    if name.endswith((".html", ".htm")) or text.lstrip()[:100].lower().startswith(
+            ("<!doctype html", "<html")):
+        return _parse_takeout_html(text)
     if name.endswith(".json") or text.lstrip().startswith(("{", "[")):
         try:
             doc = json.loads(text)
@@ -508,7 +623,7 @@ def parse_history_file(content: bytes, filename: str = "") -> dict:
         entries = doc
         if isinstance(doc, dict):
             for key in ("items", "history", "activities", "events",
-                        "conversations", "queries"):
+                        "conversations", "chats", "sessions", "queries"):
                 if isinstance(doc.get(key), list):
                     entries = doc[key]
                     break
@@ -521,6 +636,15 @@ def parse_history_file(content: bytes, filename: str = "") -> dict:
                 if isinstance(e, str) and e.strip():
                     items.append({"question": e.strip(), "answer": None,
                                   "asked_at": None})
+                else:
+                    skipped += 1
+                continue
+            conv = _as_conversation(e)
+            if conv is not None:
+                paired = _pair_messages(conv)
+                if paired:
+                    items.extend({"question": q, "answer": a, "asked_at": t}
+                                 for q, a, t in paired)
                 else:
                     skipped += 1
                 continue
@@ -592,6 +716,174 @@ def _entry_parts(e: dict) -> tuple[str | None, str | None, str | None]:
     if isinstance(text, str) and text.strip():
         return text.strip()[:2000], answer, when
     return None, None, None
+
+
+_USER_ROLES = frozenset({
+    "user", "human", "prompter", "question", "user_input", "customer",
+})
+_ASSISTANT_ROLES = frozenset({
+    "assistant", "ai", "gpt", "qwen", "model", "answer", "response",
+    "output", "bot", "agent",
+})
+_SYSTEM_ROLES = frozenset({"system", "developer", "tool", "function"})
+
+
+def _message_parts(m) -> tuple[str | None, str | None, str | None]:
+    """One chat message -> (role, text, timestamp). Role names vary by
+    exporter (user/human, assistant/ai/qwen) and content arrives as a string,
+    a parts array, or a nested object — all three are the same message."""
+    if not isinstance(m, dict):
+        return None, (str(m).strip()[:2000] or None), None
+    role = ""
+    for k in ("role", "author", "sender", "from", "type"):
+        v = m.get(k)
+        if isinstance(v, dict):
+            v = v.get("role") or v.get("name")
+        if isinstance(v, str) and v.strip():
+            role = v.strip().lower()
+            break
+    content = m.get("content", m.get("text", m.get("message", m.get("value"))))
+    if isinstance(content, dict):
+        # ChatGPT shape: {"content_type": "text", "parts": [...]}.
+        parts = content.get("parts")
+        content = parts if isinstance(parts, list) else (
+            content.get("text") or content.get("content") or "")
+    if isinstance(content, list):
+        chunks = []
+        for p in content:
+            if isinstance(p, str) and p.strip():
+                chunks.append(p.strip())
+            elif isinstance(p, dict):
+                t = p.get("text") or p.get("content")
+                if isinstance(t, str) and t.strip():
+                    chunks.append(t.strip())
+        content = "\n".join(chunks)
+    text = content.strip()[:20000] if isinstance(content, str) else ""
+    ts = None
+    for k in ("timestamp", "created_at", "created", "create_time", "time",
+              "date"):
+        v = m.get(k)
+        if isinstance(v, (int, float)) and v > 0:
+            try:
+                import datetime as _dt
+                ts = _dt.datetime.fromtimestamp(
+                    v / 1000 if v > 1e12 else v,
+                    tz=_dt.UTC).isoformat()[:19]
+            except Exception:
+                ts = None
+            break
+        if isinstance(v, str) and v.strip():
+            ts = v.strip()[:40]
+            break
+    return role or None, (text or None), ts
+
+
+def _role_kind(role: str | None) -> str:
+    if role in _USER_ROLES:
+        return "user"
+    if role in _ASSISTANT_ROLES:
+        return "assistant"
+    if role in _SYSTEM_ROLES:
+        return "system"
+    # An unlabeled message in a conversation export is someone's turn, not
+    # metadata: treat it as a user turn rather than dropping a question.
+    return "user"
+
+
+def _as_conversation(e: dict) -> list | None:
+    """A dict holding a message list, in any exporter's vocabulary — or None.
+
+    Covers Qwen-style ``messages``/``turns``, ChatGPT's ``mapping`` of
+    author/content nodes, and bare ``{messages: [...]}`` archives.
+    """
+    for key in ("messages", "turns", "dialogue", "thread", "chat"):
+        v = e.get(key)
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            return v
+    mapping = e.get("mapping")
+    if isinstance(mapping, dict) and mapping:
+        out = []
+        for node in mapping.values():
+            if not isinstance(node, dict):
+                continue
+            msg = node.get("message")
+            if isinstance(msg, dict):
+                out.append(msg)
+        if out:
+            return out
+    return None
+
+
+def _pair_messages(messages: list) -> list[tuple[str, str | None, str | None]]:
+    """Pair turns into [(question, answer, asked_at)] in order.
+
+    Each user turn opens an item; following assistant turns join its answer
+    until the next user turn. A trailing question with no answer stays
+    question-only (it is what the user will press Answer on). An assistant
+    turn with no preceding question and a system turn are skipped — there is
+    nothing to attribute them to, and attributing them wrongly is worse.
+    """
+    items: list[tuple[str | None, str | None, str | None]] = []
+    pending_q: str | None = None
+    pending_t: str | None = None
+    acc: list[str] = []
+
+    def flush() -> None:
+        nonlocal pending_q, pending_t, acc
+        if pending_q:
+            items.append((pending_q, "\n\n".join(acc) or None, pending_t))
+        pending_q, pending_t, acc = None, None, []
+
+    for m in messages or []:
+        role, text, ts = _message_parts(m)
+        if not text:
+            continue
+        kind = _role_kind(role)
+        if kind == "system":
+            continue
+        if kind == "user":
+            flush()
+            pending_q, pending_t = text[:2000], ts
+        elif pending_q is not None:
+            acc.append(text)
+    flush()
+    return [(q, a, t) for q, a, t in items if q]
+
+
+_ROLE_HEADING = re.compile(
+    r"^#{1,4}\s*(user|you|human|prompter|question|assistant|ai|qwen|"
+    r"answer|response|model)\b\s*:?\s*$", re.I)
+
+
+def _parse_markdown_conversation(text: str) -> tuple[list[dict], int]:
+    """A Markdown transcript with User/Assistant sections -> paired items.
+
+    A .md file with no role headings is not a transcript: its prose lines are
+    not questions, so it counts as one skip rather than N bogus imports.
+    """
+    lines = (text or "").splitlines()
+    sections: list[tuple[str, list[str]]] = []
+    current: tuple[str, list[str]] | None = None
+    for line in lines:
+        m = _ROLE_HEADING.match(line.strip())
+        if m:
+            if current is not None:
+                sections.append(current)
+            current = (m.group(1).lower(), [])
+        elif current is not None:
+            current[1].append(line)
+    if current is not None:
+        sections.append(current)
+    if not sections:
+        return [], 1
+    messages = []
+    for role, body in sections:
+        chunk = "\n".join(body).strip().strip("`").strip()
+        if chunk:
+            messages.append({"role": role, "content": chunk})
+    paired = _pair_messages(messages)
+    return ([{"question": q, "answer": a, "asked_at": t}
+             for q, a, t in paired], 0)
 
 
 def auto_tags(text: str) -> list[str]:

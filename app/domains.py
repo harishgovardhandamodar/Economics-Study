@@ -696,6 +696,51 @@ def entity_tokens(value: str) -> set[str]:
     return out
 
 
+# Acronym -> domains it implies. An "ECB rate path" question is about monetary
+# policy even though neither word appears: the institution *is* the domain
+# for retrieval and tagging purposes. Deliberately short — only the
+# unambiguous ones. An ambiguous abbreviation here would silently re-scope
+# every question that mentions it.
+ALIAS_DOMAINS: dict[str, tuple[str, ...]] = {
+    "ecb": ("monetary_policy",),
+    "fed": ("monetary_policy",),
+    "boe": ("monetary_policy",),
+    "boj": ("monetary_policy",),
+    "pboc": ("monetary_policy",),
+    "treasury": ("sovereign_debt", "fiscal_policy"),
+    "ust": ("sovereign_debt", "fiscal_policy"),
+    "imf": ("macro",),
+    "bis": ("macro", "monetary_policy"),
+    "oecd": ("macro", "fiscal_policy"),
+    "wto": ("trade",),
+    "ustr": ("trade",),
+    "ferc": ("datacenters", "macro"),
+    "eia": ("macro",),
+    "iea": ("macro",),
+    "lbnl": ("datacenters",),
+    "nato": ("geopolitics",),
+    "brics": ("geopolitics",),
+    "g7": ("geopolitics",),
+    "g20": ("geopolitics",),
+    "suez": ("disruptions", "trade"),
+    "hormuz": ("disruptions", "trade"),
+    "opec": ("macro",),
+}
+
+
+def alias_domains(text: str) -> set[str]:
+    """Domains implied by acronyms and proper names in free text."""
+    import re as _re
+    out: set[str] = set()
+    for part in _re.split(r"[^A-Za-z0-9]+", str(text or "")):
+        if not part:
+            continue
+        for dom in ALIAS_DOMAINS.get(part.lower(), ()):
+            if dom in DOMAINS:
+                out.add(dom)
+    return out
+
+
 def domain_catalog() -> list[dict]:
     rows = []
     for did, d in DOMAINS.items():
