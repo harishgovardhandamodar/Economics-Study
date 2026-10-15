@@ -2058,8 +2058,8 @@ async def ask_import(request: Request, db: Session = Depends(get_db)):
     from . import ask as _ask
     try:
         form = await request.form()
-    except Exception:
-        raise HTTPException(400, "multipart file upload is required")
+    except Exception as e:
+        raise HTTPException(400, "multipart file upload is required") from e
     upload = form.get("file")
     if upload is None or not hasattr(upload, "read"):
         raise HTTPException(400, "multipart field 'file' is required")
