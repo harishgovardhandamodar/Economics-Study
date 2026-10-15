@@ -47,6 +47,8 @@ button{cursor:pointer}
 .pill.warn{color:var(--orange);border-color:var(--orange)}
 .pill.err{color:var(--red);border-color:var(--red)}
 .pill.busy{color:var(--accent);border-color:var(--accent)}
+#queuePill{cursor:pointer}
+#queuePill:hover{border-color:var(--accent);color:var(--accent)}
 .icon-btn{background:transparent;border:1px solid var(--border);color:var(--text2);
   border-radius:6px;padding:5px 9px;transition:.12s}
 .icon-btn:hover{border-color:var(--accent);color:var(--accent)}
@@ -321,7 +323,7 @@ table.tbl tr:hover td{background:var(--bg2)}
     <h1><i class="fas fa-chart-network"></i> Economics Cross-Domain Mapper</h1>
     <div class="header-right">
       <span id="llmPill" class="pill">gateway…</span>
-      <span id="queuePill" class="pill">queue…</span>
+      <span id="queuePill" class="pill" onclick="showQueueModal()" title="Show queued work">queue…</span>
       <span id="integrityPill" class="pill">ledger…</span>
       <button class="icon-btn" id="taxBtn" title="Domain taxonomy">
         <i class="fas fa-diagram-project"></i></button>
@@ -1928,7 +1930,77 @@ function openModal(title, body, foot = '') {
   $('#modalFoot').innerHTML = foot;
   $('#modalBack').classList.add('open');
 }
-function closeModal() { $('#modalBack').classList.remove('open'); }
+function closeModal() {
+  $('#modalBack').classList.remove('open');
+  if (State.queueTimer) { clearInterval(State.queueTimer); State.queueTimer = null; }
+}
+
+// ---------- queue overlay ----------
+async function showQueueModal() {
+  openModal('Queue', '<div class="empty">Loading…</div>',
+    '<button class="btn primary" onclick="closeModal()">Close</button>');
+  await loadQueueModal();
+  // Live overlay: refresh twice a second-ish while open so a draining queue
+  // is visible without reopening. Stopped by closeModal.
+  if (State.queueTimer) clearInterval(State.queueTimer);
+  State.queueTimer = setInterval(async () => {
+    if (!$('#modalBack').classList.contains('open')) {
+      clearInterval(State.queueTimer);
+      State.queueTimer = null;
+      return;
+    }
+    await loadQueueModal(true);
+  }, 2000);
+}
+
+async function loadQueueModal(quiet = false) {
+  try {
+    const [q, w] = await Promise.all([
+      api('/api/jobs'),
+      api('/api/jobs/worker').catch(() => null),
+    ]);
+    const counts = q.counts || {};
+    const jobs = q.jobs || [];
+    const invName = (id) => {
+      const inv = State.investigations.find(i => i.id === id);
+      return inv ? esc(inv.title.slice(0, 44)) : 'inv ' + id;
+    };
+    $('#modalBody').innerHTML = `
+      <div class="meta-strip">
+        <span class="tag">queued ${counts.queued || 0}</span>
+        <span class="tag">running ${counts.running || 0}</span>
+        <span class="tag">done ${counts.done || 0}</span>
+        <span class="tag">error ${counts.error || 0}</span>
+        ${w ? `<span class="tag" style="color:var(--${w.worker_alive ? 'green' : 'red'})">
+          worker ${w.worker_alive ? 'alive' : 'DEAD'}</span>` : ''}
+      </div>
+      ${!w?.worker_alive && w ? `<div class="banner err"><i class="fas fa-triangle-exclamation"></i>
+        <span>The worker thread is down with jobs waiting — restart the server.
+        Queued work is safe in the database and resumes on startup.</span></div>` : ''}
+      ${jobs.length ? jobs.map(j => `
+        <div class="source-item" style="margin-bottom:7px">
+          <div><strong>#${j.id} ${esc(j.kind)}</strong>
+            <span class="tag" style="margin-left:6px;color:var(--${
+              j.status === 'error' ? 'red' : j.status === 'running' ? 'accent' : 'text2'})">${esc(j.status)}</span>
+            <span style="color:var(--text3);font-size:11px;margin-left:6px">
+              ${j.investigation_id ? invName(j.investigation_id) : ''} · attempt ${j.attempts}</span>
+            ${j.status === 'queued' ? `<button class="btn sm danger" style="float:right"
+              onclick="cancelJob(${j.id})">cancel</button>` : ''}
+          </div>
+          ${j.error ? `<div style="color:var(--red);font-size:11px;margin-top:5px">${esc(j.error.slice(0, 220))}</div>` : ''}
+        </div>`).join('') : '<div class="empty">Queue is empty.</div>'}`;
+  } catch (e) {
+    if (!quiet) toast(e.message, 'err');
+  }
+}
+
+async function cancelJob(id) {
+  try {
+    await api(`/api/jobs/${id}/cancel`, { method: 'POST' });
+    toast(`Job #${id} cancelled.`, 'ok');
+    await loadQueueModal();
+  } catch (e) { toast(e.message, 'err'); }
+}
 
 // ==========================================================================
 // Boot
