@@ -24,7 +24,7 @@ flowchart TB
         QUEUE[("Job queue<br/>lease-based")]
     end
 
-    UI <--|"REST + SSE-less polling"| APP
+    APP-.->|"REST + SSE-less polling"| UI
     APP -->|"keyword-filtered scan"| RSS
     APP -->|"full-text search"| ARXIV
     APP -->|"HTML scrape"| WEB

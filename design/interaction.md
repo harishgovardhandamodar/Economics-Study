@@ -59,6 +59,7 @@ sequenceDiagram
 
     AG->>LED: run.end
     LED-->>AG: hash committed
+    end
 ```
 
 ## Where the guarantees live

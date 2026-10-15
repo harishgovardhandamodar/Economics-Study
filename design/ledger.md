@@ -29,7 +29,7 @@ failures that are really one.
 flowchart TB
     subgraph EVENT["ledger_events row"]
         subgraph HASHED["HASHED — CORE_FIELDS"]
-            run_id, seq, ts, actor_type,<br/>actor, kind, intent, verdict,<br/>severity, data_json, prev_hash
+            CORE["run_id, seq, ts, actor_type,<br/>actor, kind, intent, verdict,<br/>severity, data_json, prev_hash"]
         end
         subgraph OUTSIDE["NOT hashed"]
             proof_json["proof_json<br/><i>derived state —<br/>recomputed and compared,<br/>drift reported</i>"]
