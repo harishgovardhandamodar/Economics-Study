@@ -115,7 +115,8 @@ DOMAINS: dict[str, dict] = {
     "trade": {
         "label": "Cross-border trade policy",
         "short": "Trade",
-        "blurb": "Tariffs, quotas, trade deals, rules of origin, customs, WTO disputes.",
+        "blurb": ("Tariffs, quotas, trade deals, rules of origin, customs, "
+                  "WTO disputes."),
         "color": "#e3b341",
         "icon": "fa-ship",
     },
@@ -129,7 +130,8 @@ DOMAINS: dict[str, dict] = {
     "disruptions": {
         "label": "Intercontinental disruptions",
         "short": "Disruptions",
-        "blurb": "Chokepoints, cable cuts, pandemics, disasters that break supply chains.",
+        "blurb": ("Chokepoints, cable cuts, pandemics, disasters that break "
+                  "supply chains."),
         "color": "#7ee787",
         "icon": "fa-cloud-bolt",
     },

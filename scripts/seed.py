@@ -103,7 +103,8 @@ INVESTIGATIONS = [
             "inflation, issuance and the policy reaction."),
         "preferred_domains": "trade,geopolitics,disruptions,macro,politics",
         "driver": "tariff_shock",
-        "shock": "A 25-point tariff hike lands in the same quarter as a strait closure.",
+        "shock": ("A 25-point tariff hike lands in the same quarter as "
+                  "a strait closure."),
         "sources": "rss,web",
     },
 ]
