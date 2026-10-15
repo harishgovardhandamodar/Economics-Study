@@ -42,3 +42,19 @@ def test_no_backticks_inside_html_attributes():
     assert not bad, (
         f"onclick attributes containing backticks (nested template "
         f"literals — whole-script parse error): {bad}")
+
+
+def test_top_level_app_switcher():
+    """Executive brief and Design are top-level apps beside the Mapper, not
+    investigation tabs: they are estate-wide and work with zero investigations
+    selected. Three buttons, one switch function, and refreshView must branch
+    on State.app before demanding an investigation."""
+    html = HTML.read_text()
+    apps = re.findall(r'data-app="([a-z]+)"', html)
+    assert apps == ["mapper", "brief", "design"], (
+        f"expected exactly the three top-level apps, found {apps}")
+    assert "function switchApp(app)" in html
+    assert "State.app === 'brief'" in html
+    assert "State.app === 'design'" in html
+    # The per-investigation tab row hides outside the mapper.
+    assert "tabs.style.display" in html

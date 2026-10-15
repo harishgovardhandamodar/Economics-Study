@@ -349,6 +349,10 @@ Design decisions worth knowing:
 
 ## GUI tour
 
+Three top-level apps share the header switcher. **Mapper** is the
+per-investigation workbench below; **Executive brief** and **Design** are
+estate-wide and work with zero investigations selected.
+
 **Investigations** (sidebar) — title, keywords, brief, an optional **driver**
 (the economic event being tracked), a shock statement, sources, and the domains
 of interest. Actions: *Collect*, *Find open gaps*, *Executive summary*, *Full
@@ -413,13 +417,13 @@ caps fast; directional mass decides.
 intent deterministic over stored rows. Invoke one hop directly from
 `POST /api/agents/invoke`.
 
-**Executive brief** — estate-wide and works with zero investigations: headline
+**Executive brief** (top-level app) — estate-wide and works with zero investigations: headline
 numbers, the global knowledge graph across sessions (grey hubs are
 investigations, colors are domains; click a hub to open that session's graph),
 clusters by domain, cross-session bridges where one session's evidence bears
 on another's question, plus alerts.
 
-**Design** — the eight design documents as a selectable index, rendered with
+**Design** (top-level app) — the eight design documents as a selectable index, rendered with
 diagrams live (Mermaid via CDN, source fallback offline). Served from a
 constant index, never a directory listing, so no input can become a path.
 
