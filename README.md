@@ -468,8 +468,8 @@ All reasoning goes through the fox-services gateway (OpenAI-compatible
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LLM_BASE_URL` | `http://localhost:8210/v1` | Preferred gateway |
-| `LLM_FALLBACK_URL` | — | Tried in order after the preferred one |
+| `LLM_BASE_URL` | `http://192.168.1.173:8210/v1` | Preferred gateway (Axiom, LAN) |
+| `LLM_FALLBACK_URL` | `http://localhost:8210/v1` | This host's gateway, when off Axiom's LAN |
 | `LLM_MODEL` | `qwen3.8:27b` | Requested model |
 | `ECON_DATABASE_URL` | `sqlite:///data/econ.db` | Database |
 | `ECON_SCHEDULER_ENABLED` | `1` | Cron scheduling |

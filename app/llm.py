@@ -66,10 +66,10 @@ def service_name() -> str:
     return SERVICE_NAME
 
 
-BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8210/v1").rstrip("/")
-# Optional second backend (e.g. a mesh peer's Ollama). Tried in order after
-# BASE_URL.
-FALLBACK_URL = os.environ.get("LLM_FALLBACK_URL", "").rstrip("/")
+BASE_URL = os.environ.get("LLM_BASE_URL", "http://192.168.1.173:8210/v1").rstrip("/")
+# Optional second backend (this host's own gateway, used when off Axiom's
+# LAN). Tried in order after BASE_URL.
+FALLBACK_URL = os.environ.get("LLM_FALLBACK_URL", "http://localhost:8210/v1").rstrip("/")
 MODEL = os.environ.get("LLM_MODEL", "qwen3.8:27b")
 FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", MODEL)
 TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "180"))
