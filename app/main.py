@@ -437,14 +437,28 @@ def get_artifact(artifact_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "no such artifact")
     out = _artifact_dict(a)
     out["content"] = a.content
-    out["relationships"] = [
-        {"id": r.id, "type": r.relationship_type, "description": r.description,
-         "confidence": r.confidence, "lag": r.lag,
-         "peer_id": r.target_id if r.source_id == a.id else r.source_id,
-         "direction": "out" if r.source_id == a.id else "in"}
-        for r in db.query(Relationship)
-        .filter((Relationship.source_id == a.id) |
-                (Relationship.target_id == a.id)).all()]
+    rels = (db.query(Relationship)
+            .filter((Relationship.source_id == a.id) |
+                    (Relationship.target_id == a.id)).all())
+    peer_ids = {r.target_id if r.source_id == a.id else r.source_id
+                for r in rels}
+    peers = {p.id: p for p in db.query(Artifact)
+             .filter(Artifact.id.in_(peer_ids)).all()} if peer_ids else {}
+    # Peer titles ride along so the overlay names connections instead of
+    # numbering them. A connection list of bare ids is a lookup task handed
+    # to the reader; titles make it a map you can walk.
+    out["relationships"] = []
+    for r in rels:
+        peer_id = r.target_id if r.source_id == a.id else r.source_id
+        peer = peers.get(peer_id)
+        out["relationships"].append({
+            "id": r.id, "type": r.relationship_type,
+            "description": r.description, "confidence": r.confidence,
+            "lag": r.lag, "peer_id": peer_id,
+            "peer_title": peer.title if peer else "(deleted artifact)",
+            "peer_domain": peer.domain if peer else None,
+            "direction": "out" if r.source_id == a.id else "in",
+        })
     out["reviews"] = [
         {"reviewer": r.reviewer, "decision": r.decision, "note": r.note,
          "created_at": r.created_at}

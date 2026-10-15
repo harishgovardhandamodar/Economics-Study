@@ -670,16 +670,12 @@ function drawGraph(data) {
     edges: { smooth: { type: 'continuous' }, width: 1.4, font: { size: 9, strokeWidth: 3 } },
   });
 
-  State.network.on('doubleClick', (params) => {
+  // Single click opens the detail overlay; the overlay's connection list
+  // is walkable, so the graph can be traversed without zooming and hunting.
+  State.network.on('click', (params) => {
     const n = nodes.get(params.nodes[0]);
     if (n?.id) showArtifact(n.id);
   });
-  State.network.on('click', (params) => {
-    const n = nodes.get(params.nodes[0]);
-    if (n?.id) highlightConnections(n.id);
-  });
-  // Declutter: the edge label is unreadable until you are close to the node.
-  edges.forEach((e) => nodes.get(e.from) && null);
   applyGraphFilters();
 }
 
@@ -882,10 +878,16 @@ async function showArtifact(id) {
       ${a.content ? `<div class="field"><label>Extracted text</label>
         <div style="max-height:240px;overflow:auto;font-size:12.5px;color:var(--text2);
         background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--border)">${esc(a.content)}</div></div>` : ''}
-      ${a.relationships?.length ? `<div class="field"><label>Connected to</label>
-        ${a.relationships.map(r => `<div class="source-item">
-          <span class="tag">${esc(r.type)}</span> ${r.direction === 'out' ? '→' : '←'}
-          artifact #${r.peer_id} ${r.description ? `<div style="color:var(--text2);margin-top:5px">${esc(r.description)}</div>` : ''}
+      ${a.relationships?.length ? `<div class="field"><label>Connected to (${a.relationships.length})</label>
+        ${a.relationships.map(r => `<div class="source-item" onclick="showArtifact(${r.peer_id})"
+            style="cursor:pointer" title="Open this artifact">
+          <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+            <span class="tag">${esc(r.type)}</span>
+            <span style="color:var(--text3)">${r.direction === 'out' ? '→' : '←'}</span>
+            ${r.peer_domain ? `<span class="dot" style="background:${domColor(r.peer_domain)}"></span>` : ''}
+            <strong style="flex:1;min-width:140px">${esc(r.peer_title)}</strong>
+          </div>
+          ${r.description ? `<div style="color:var(--text2);margin-top:5px">${esc(r.description)}</div>` : ''}
           ${r.confidence != null ? `<div style="color:var(--text3);font-size:11px;margin-top:4px">
             prior ${r.confidence} · lag ${r.lag ?? '?'}q</div>` : ''}
         </div>`).join('')}</div>` : ''}
@@ -912,12 +914,6 @@ async function deleteArtifact(id) {
 async function clearDrift(id) {
   await api(`/api/artifacts/${id}/clear-drift`, { method: 'POST' });
   closeModal(); await reloadArtifacts(); toast('Drift flag cleared.', 'ok');
-}
-
-function highlightConnections(id) {
-  const rel = (State.graph.edges || []).filter(e => e.from === id || e.to === id);
-  if (rel.length) toast(`<strong>${rel.length}</strong> connection(s) · ` +
-    [...new Set(rel.map(e => e.label))].map(esc).join(', '));
 }
 
 // ---------- research gaps ----------

@@ -110,6 +110,31 @@ def test_similar_and_recommendations_and_compare(client):
     assert "planned_intents" in ctrl and "allowed_actors" in ctrl
 
 
+def test_artifact_detail_names_connections(client):
+    """The overlay names connections instead of numbering them, so the map is
+    walkable from inside the overlay."""
+    inv = _inv(client)
+    a = client.post(f"/api/investigations/{inv['id']}/artifacts", json={
+        "title": "Fed holds rates", "domain": "monetary_policy"}).json()
+    b = client.post(f"/api/investigations/{inv['id']}/artifacts", json={
+        "title": "Float shifts to bills", "domain": "stablecoins"}).json()
+    client.post("/api/relationships", json={
+        "investigation_id": inv["id"], "source_id": a["id"],
+        "target_id": b["id"], "relationship_type": "transmits_to",
+        "description": "reserve yield", "confidence": 0.8, "lag": 0})
+    detail = client.get(f"/api/artifacts/{a['id']}").json()
+    assert len(detail["relationships"]) == 1
+    rel = detail["relationships"][0]
+    assert rel["peer_id"] == b["id"]
+    assert rel["peer_title"] == "Float shifts to bills"
+    assert rel["peer_domain"] == "stablecoins"
+    assert rel["direction"] == "out"
+    # And from the other side the direction flips.
+    detail_b = client.get(f"/api/artifacts/{b['id']}").json()
+    assert detail_b["relationships"][0]["direction"] == "in"
+    assert detail_b["relationships"][0]["peer_title"] == "Fed holds rates"
+
+
 def test_explanation_thread_and_quiz_and_bookmark(client):
     inv = _inv(client)
     client.post(f"/api/investigations/{inv['id']}/artifacts", json={
