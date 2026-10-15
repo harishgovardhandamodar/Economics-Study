@@ -2044,6 +2044,24 @@ def ask_threads(investigation_id: int | None = None, limit: int = 30,
     return _ask.list_threads(db, investigation_id, limit=limit, group=group)
 
 
+@app.get("/api/ask/imports")
+def ask_imports(group: str | None = None, limit: int = 100,
+                db: Session = Depends(get_db)):
+    """Imported chat items only: the import queue as a list."""
+    from . import ask as _ask
+    return _ask.list_threads(db, None, limit=limit, group=group,
+                             imported_only=True)
+
+
+@app.get("/api/ask/imports/graph")
+def ask_imports_graph(group: str | None = None,
+                      db: Session = Depends(get_db)):
+    """All imported chat items as one clustered graph: group hubs plus member
+    items, orange pending and green answered. Navigation, not evidence."""
+    from . import ask as _ask
+    return _ask.imports_graph(db, group)
+
+
 @app.post("/api/ask/import")
 async def ask_import(request: Request, db: Session = Depends(get_db)):
     """Import a Google AI Mode / Takeout / chat-export history as threads.

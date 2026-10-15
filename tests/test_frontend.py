@@ -51,8 +51,8 @@ def test_top_level_app_switcher():
     on State.app before demanding an investigation."""
     html = HTML.read_text()
     apps = re.findall(r'data-app="([a-z]+)"', html)
-    assert apps == ["mapper", "brief", "design", "ask"], (
-        f"expected exactly the four top-level apps, found {apps}")
+    assert apps == ["mapper", "brief", "design", "ask", "imports"], (
+        f"expected exactly the five top-level apps, found {apps}")
     assert "function switchApp(app)" in html
     assert "State.app === 'brief'" in html
     assert "State.app === 'design'" in html

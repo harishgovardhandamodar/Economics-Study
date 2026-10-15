@@ -401,31 +401,104 @@ def _trace_of(e) -> dict:
         return {}
 
 
+IMPORTS_GRAPH_LIMIT = 500
+
+
+def imports_graph(db, group: str | None = None) -> dict:
+    """All imported chat items as one clustered graph for navigation.
+
+    Group hubs plus member items, nothing else: the grouping *is* the
+    clustering, computed from content at import time. Item nodes carry status
+    color (pending orange, answered green) so the unanswered work is visible
+    at a glance. Clicking navigates — the graph answers "what did I ask about
+    X and what is still open", not "what does the evidence say".
+    """
+    from .models import Explanation as _E
+    rows = (db.query(_E).filter(_E.parent_id.is_(None))
+            .order_by(_E.id.desc()).limit(IMPORTS_GRAPH_LIMIT + 1).all())
+    imported = [r for r in rows if _trace_of(r).get("imported")]
+    truncated = len(rows) > IMPORTS_GRAPH_LIMIT
+    by_group: dict[str, list] = {}
+    for r in imported:
+        g = _trace_of(r).get("import_group") or "imported"
+        if group is not None and g != group:
+            continue
+        by_group.setdefault(g, []).append(r)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    n_items = 0
+    for g in sorted(by_group):
+        members = by_group[g]
+        nodes.append({
+            "id": f"g:{g}", "label": g, "title": f"{len(members)} imported",
+            "group": "hub",
+            "color": {"background": "#6e7681", "border": "#ffffff"},
+            "value": 3,
+        })
+        for r in members:
+            done = r.status == "done"
+            nodes.append({
+                "id": f"i:{r.id}",
+                "label": (r.question or "")[:70],
+                "title": r.question or "",
+                "group": "import",
+                "color": {"background": "#3fb950" if done else "#d29922",
+                          "border": "#3fb950" if done else "#d29922"},
+                "value": 1,
+                "status": r.status,
+                "explanation_id": r.id,
+            })
+            edges.append({
+                "id": f"m:{r.id}", "from": f"i:{r.id}", "to": f"g:{g}",
+                "label": "in_group", "title": g,
+                "color": {"color": "#6e7681"}, "dashes": True,
+            })
+            n_items += 1
+    return {
+        "nodes": nodes, "edges": edges,
+        "truncated": truncated, "limit": IMPORTS_GRAPH_LIMIT,
+        "groups": [{"group": g, "count": len(m)}
+                   for g, m in sorted(by_group.items())],
+        "counts": {"items": n_items, "groups": len(by_group)},
+    }
+
+
 def list_threads(db, investigation_id: int | None = None,
-                 limit: int = 30, group: str | None = None) -> dict:
+                 limit: int = 30, group: str | None = None,
+                 imported_only: bool = False) -> dict:
     """Thread roots, newest first, with shape: children count, depth, status.
 
     Each item carries its import ``group`` and ``tags`` (empty for pipeline
     answers), and the response lists every group with its count so the UI can
     filter without a second round trip. Groups are scanned over the latest
-    200 roots — bounded, because an unbounded DISTINCT over JSON text is a
+    500 roots — bounded, because an unbounded DISTINCT over JSON text is a
     full table walk dressed as metadata.
     """
     from sqlalchemy import func
 
     from .models import Explanation as _E
+
+    def _is_imported(r) -> bool:
+        return bool(_trace_of(r).get("imported"))
+
     q = db.query(_E).filter(_E.parent_id.is_(None))
     if investigation_id is not None:
         q = q.filter(_E.investigation_id == investigation_id)
-    roots = q.order_by(_E.id.desc()).limit(limit).all()
+    # Filter in Python over one bounded scan: group and imported flags live
+    # inside trace JSON, which no index reaches. One scan serves the page,
+    # the filter, and the group counts together.
+    scan = q.order_by(_E.id.desc()).limit(500).all()
     groups: dict[str, int] = {}
-    for r in db.query(_E).filter(_E.parent_id.is_(None)).order_by(
-            _E.id.desc()).limit(200).all():
+    for r in scan:
+        if imported_only and not _is_imported(r):
+            continue
         g = _trace_of(r).get("import_group") or (
-            "imported" if _trace_of(r).get("imported") else "asked")
+            "imported" if _is_imported(r) else "asked")
         groups[g] = groups.get(g, 0) + 1
     out = []
-    for r in roots:
+    for r in scan:
+        if len(out) >= limit:
+            break
         # Descendants carry thread_id == root id; the root itself has
         # thread_id NULL, so no off-by-one subtraction is needed. Counting
         # thread membership instead of direct children is what makes nested
@@ -436,6 +509,8 @@ def list_threads(db, investigation_id: int | None = None,
         gname = t.get("import_group") or (
             "imported" if t.get("imported") else "asked")
         if group is not None and gname != group:
+            continue
+        if imported_only and not t.get("imported"):
             continue
         out.append({
             "id": r.id, "thread_id": r.thread_id or r.id,

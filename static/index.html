@@ -190,6 +190,8 @@ label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-wei
 #graph{flex:1;min-height:0;background:var(--graph-bg);border-radius:0}
 #briefGraph{height:420px;background:var(--graph-bg);border:1px solid var(--border);
   border-radius:9px}
+#importsGraph{height:420px;background:var(--graph-bg);border:1px solid var(--border);
+  border-radius:9px}
 #askGraph{height:300px;background:var(--graph-bg);border:1px solid var(--border);
   border-radius:9px;margin-bottom:6px}
 .mermaid{display:flex;justify-content:center;margin:14px 0;overflow-x:auto}
@@ -359,6 +361,8 @@ table.tbl tr:hover td{background:var(--bg2)}
         <i class="fas fa-drafting-compass"></i> Design</button>
       <button class="app-btn" data-app="ask" onclick="switchApp('ask')">
         <i class="fas fa-comments"></i> Ask</button>
+      <button class="app-btn" data-app="imports" onclick="switchApp('imports')">
+        <i class="fas fa-box-archive"></i> Imports</button>
     </div>
     <div class="header-right">
       <span id="llmPill" class="pill">gateway…</span>
@@ -680,6 +684,7 @@ async function refreshView() {
   if (State.app === 'brief') return viewBrief(el);
   if (State.app === 'design') return viewDesign(el);
   if (State.app === 'ask') return viewAsk(el);
+  if (State.app === 'imports') return viewImports(el);
   // Mapper views need an investigation selected first.
   if (!State.invId) {
     el.className = 'view';
@@ -1955,6 +1960,97 @@ async function openSearchDoc(type, id, invId) {
   }
 }
 
+// ---------- imports ----------
+// Imported chat history as a clustered graph: group hubs plus member items,
+// orange pending and green answered. Navigation, not evidence — clicking an
+// item opens its thread in the Ask tab, clicking a hub scopes to the group.
+async function viewImports(el) {
+  el.className = 'view';
+  const group = State.importsGroup || '';
+  const [g, list] = await Promise.all([
+    api('/api/ask/imports/graph' + (group ? '?group=' + encodeURIComponent(group) : '')).catch(() => ({ nodes: [], edges: [], groups: [], counts: {} })),
+    api('/api/ask/imports?limit=100' + (group ? '&group=' + encodeURIComponent(group) : '')).catch(() => ({ threads: [], groups: [] })),
+  ]);
+  const counts = g.counts || {};
+  const done = list.threads.filter(t => t.status === 'done').length;
+  el.innerHTML = `
+    <div class="grid c4" style="margin-bottom:14px">
+      <div class="stat"><div class="n">${counts.items ?? 0}</div><div class="l">Imported items</div></div>
+      <div class="stat"><div class="n">${counts.groups ?? 0}</div><div class="l">Groups</div></div>
+      <div class="stat"><div class="n" style="color:var(--green)">${done}</div><div class="l">Answered</div></div>
+      <div class="stat"><div class="n" style="color:var(--orange)">${(counts.items ?? 0) - done}</div><div class="l">Awaiting answer</div></div>
+    </div>
+    <div class="card">
+      <h3><i class="fas fa-box-archive"></i> Import clusters
+        <span class="sub">grey hubs are content groups — click one to scope, click an item to open its thread</span></h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn sm ${group ? '' : 'primary'}" onclick="setImportsGroup('')">All groups</button>
+        ${(g.groups || []).map(x => `<button class="btn sm ${group === x.group ? 'primary' : ''}"
+          onclick="setImportsGroup('${esc(x.group).replace(/'/g, "\\'")}')">${esc(x.group)} (${x.count})</button>`).join('')}
+      </div>
+      <div id="importsGraph"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">
+        Orange items await an answer · green are answered.</div>
+    </div>
+    <div class="card"><h3><i class="fas fa-list"></i> Items
+      <span class="sub">${list.threads.length} shown</span></h3>
+      <div id="importsList">${list.threads.map(t => `
+        <div class="source-item" style="margin-bottom:7px">
+          <div style="cursor:pointer" onclick="openImportThread(${t.id})">
+            <strong>${esc(t.question.slice(0, 110))}</strong></div>
+          <div style="color:var(--text3);font-size:11px;margin-top:4px">
+            <span class="tag">${esc(t.group || 'imported')}</span>
+            ${(t.tags || []).slice(0, 5).map(tag => `<span class="tag" style="color:var(--teal)">${esc(tag)}</span>`).join('')}
+            <span>${esc(t.status)} · ${fmtDate(t.created_at)}</span>
+          </div>
+          <div class="art-actions" style="margin-top:7px" onclick="event.stopPropagation()">
+            <button class="btn sm" onclick="openImportThread(${t.id})">Open thread</button>
+            ${t.status === 'imported' ? `<button class="btn sm primary" onclick="answerImported(${t.id})">Answer</button>` : ''}
+          </div>
+        </div>`).join('') || '<div class="empty">Nothing imported yet — use Ask → Import history.</div>'}</div>
+    </div>`;
+  drawImportsGraph(g);
+}
+
+function setImportsGroup(g) {
+  State.importsGroup = g || null;
+  refreshView();
+}
+
+function openImportThread(id) {
+  State.askOpen = id;
+  switchApp('ask');
+}
+
+function drawImportsGraph(data) {
+  const container = $('#importsGraph');
+  if (!container) return;
+  State.importsNetwork?.destroy();
+  const nodes = new vis.DataSet((data.nodes || []).map(n => ({
+    id: n.id, label: n.label, title: n.title, shape: 'dot',
+    size: n.group === 'hub' ? 24 : 12,
+    color: n.color, font: { size: 11, color: getComputedStyle(document.body).color },
+  })));
+  const edges = new vis.DataSet((data.edges || []).map(e => ({
+    id: e.id, from: e.from, to: e.to,
+    color: e.color, dashes: !!e.dashes,
+  })));
+  State.importsNetwork = new vis.Network(container, { nodes, edges }, {
+    physics: { solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -70, centralGravity: 0.008,
+        springLength: 170, springConstant: 0.045, damping: 0.5 },
+      stabilization: { iterations: 200 } },
+    interaction: { hover: true, tooltipDelay: 110 },
+  });
+  State.importsNetwork.on('click', (params) => {
+    const nid = params.nodes[0];
+    if (typeof nid !== 'string') return;
+    if (nid.startsWith('i:')) openImportThread(parseInt(nid.slice(2), 10));
+    else if (nid.startsWith('g:')) setImportsGroup(nid.slice(2));
+  });
+}
+
+// ---------- summary ----------
 // ---------- summary ----------
 async function viewBoard(el) {
   el.className = 'view';

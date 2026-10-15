@@ -538,3 +538,51 @@ def test_import_takeout_html(client):
     t = client.get("/api/ask/threads").json()["threads"][0]
     assert t["question"] == "tether reserve attestation"
     assert "Stablecoins" in t["tags"]
+
+def test_imports_list_filters_pipeline_threads(client):
+    import json as _json
+    _upload(client, _json.dumps(
+        [{"query": "Imported q?"}]).encode())
+    _seed_collected(client)
+    _ask(client)
+    only = client.get("/api/ask/imports").json()
+    assert only["threads"] and all(t["imported"] for t in only["threads"])
+    assert all("Imported q?" in t["question"] for t in only["threads"])
+    assert only["groups"]
+
+
+def test_imports_graph_clusters_and_navigates(client):
+    import json as _json
+    _upload(client, _json.dumps([
+        {"query": "Will tariffs raise CPI?",
+         "answer": "Yes, via import prices."},
+        {"query": "Suez canal freight rates"},
+    ]).encode())
+    g = client.get("/api/ask/imports/graph").json()
+    hub_ids = {n["id"] for n in g["nodes"] if n["group"] == "hub"}
+    item_ids = {n["id"] for n in g["nodes"] if n["group"] == "import"}
+    assert hub_ids and item_ids
+    assert all(i.startswith("i:") for i in item_ids)
+    # Every item hangs off exactly one group hub.
+    member_edges = [e for e in g["edges"] if e["label"] == "in_group"]
+    assert len(member_edges) == len(item_ids)
+    assert {e["to"] for e in member_edges} <= hub_ids
+    # Status color tells pending from answered at a glance.
+    colors = {n["id"]: n["color"]["background"] for n in g["nodes"]
+              if n["group"] == "import"}
+    assert set(colors.values()) <= {"#d29922", "#3fb950"}
+    # Group scope narrows the whole graph.
+    one_group = g["groups"][0]["group"]
+    scoped = client.get(
+        f"/api/ask/imports/graph?group={one_group}").json()
+    assert {n["id"] for n in scoped["nodes"] if n["group"] == "hub"} == {
+        f"g:{one_group}"}
+    assert scoped["counts"]["groups"] == 1
+    # Empty estate graphs honestly.
+    assert g["truncated"] is False
+
+
+def test_imports_graph_empty_estate(client):
+    g = client.get("/api/ask/imports/graph").json()
+    assert g["nodes"] == [] and g["edges"] == []
+    assert g["counts"] == {"items": 0, "groups": 0}
