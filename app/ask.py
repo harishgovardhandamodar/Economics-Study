@@ -376,3 +376,143 @@ def _loads(value: str | None, default):
         return json.loads(value)
     except Exception:
         return default
+
+
+def thread_root_id(db, explanation_id: int) -> int | None:
+    """Climb to the thread root. A tree is addressed by any member."""
+    from .models import Explanation as _E
+    e = db.query(_E).filter(_E.id == explanation_id).first()
+    if e is None:
+        return None
+    seen = {e.id}
+    while e.parent_id is not None and e.parent_id not in seen:
+        seen.add(e.parent_id)
+        e = db.query(_E).filter(_E.id == e.parent_id).first()
+        if e is None:
+            return None
+    return e.id
+
+
+def thread_graph(db, explanation_id: int) -> dict | None:
+    """One thread as a knowledge graph, next to the thread view.
+
+    Three node kinds, namespaced so they cannot collide: ``e:`` messages,
+    ``a:`` collected artifacts they cite, ``w:`` live-web sources. Edges are
+    the conversation (reply_to), the grounding (cites), and the evidence
+    structure itself (the transmits_to/support edges already on the cited
+    artifacts). A thread whose answers cite nothing still graphs — messages
+    joined by replies — because the conversation is the content then.
+    """
+    from . import domains as _D
+    from .models import Explanation as _E
+    from .models import Relationship as _R
+    root_id = thread_root_id(db, explanation_id)
+    if root_id is None:
+        return None
+    members = [root_id]
+    frontier = [root_id]
+    seen = {root_id}
+    while frontier:
+        kids = (db.query(_E.id).filter(_E.parent_id.in_(frontier)).all())
+        frontier = [k[0] for k in kids if k[0] not in seen]
+        seen.update(frontier)
+        members.extend(frontier)
+    rows = (db.query(_E).filter(_E.id.in_(members)).all())
+    by_id = {e.id: e for e in rows}
+
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    cited: dict[int, dict] = {}
+    for e in rows:
+        nodes.append({
+            "id": f"e:{e.id}",
+            "label": (e.question or "")[:70] or f"answer {e.id}",
+            "title": e.question or "",
+            "group": "message",
+            "color": {"background": "#58a6ff", "border": "#58a6ff"},
+            "value": 2,
+            "status": e.status,
+            "confidence": e.confidence,
+        })
+        if e.parent_id is not None and e.parent_id in by_id:
+            edges.append({
+                "id": f"r:{e.parent_id}:{e.id}",
+                "from": f"e:{e.parent_id}", "to": f"e:{e.id}",
+                "label": "reply_to", "title": "follow-up",
+                "color": {"color": "#8b949e"}, "dashes": True,
+            })
+        try:
+            sources = json.loads(e.sources_json or "[]")
+        except Exception:
+            sources = []
+        for s in sources:
+            if not isinstance(s, dict):
+                continue
+            aid = s.get("artifact_id")
+            if aid is not None:
+                cited.setdefault(aid, {
+                    "title": s.get("title", ""), "domain": s.get("domain"),
+                    "source": s.get("source", "")})
+                edges.append({
+                    "id": f"c:{e.id}:{s.get('index')}",
+                    "from": f"e:{e.id}", "to": f"a:{aid}",
+                    "label": "cites", "title": s.get("title", "")[:120],
+                    "color": {"color": "#3fb950"},
+                })
+            elif s.get("url"):
+                wid = f"w:{e.id}:{s.get('index')}"
+                nodes.append({
+                    "id": wid,
+                    "label": (s.get("title") or s.get("url", ""))[:60],
+                    "title": s.get("url", ""),
+                    "group": "web",
+                    "color": {"background": "#d29922",
+                              "border": "#d29922"},
+                    "value": 1,
+                    "url": s.get("url", ""),
+                })
+                edges.append({
+                    "id": f"cw:{e.id}:{s.get('index')}",
+                    "from": f"e:{e.id}", "to": wid,
+                    "label": "cites", "title": "live web — unvetted",
+                    "color": {"color": "#d29922"}, "dashes": True,
+                })
+
+    if cited:
+        arts = {a.id: a for a in
+                db.query(Artifact).filter(Artifact.id.in_(list(cited))).all()}
+        for aid, meta in cited.items():
+            a = arts.get(aid)
+            dom = (a.domain if a else None) or meta.get("domain")
+            nodes.append({
+                "id": f"a:{aid}",
+                "label": ((a.title if a else meta.get("title")) or "")[:60],
+                "title": (a.title if a else meta.get("title")) or "",
+                "group": "artifact",
+                "domain": dom,
+                "color": {"background": _D.domain_color(dom),
+                          "border": _D.domain_color(dom)},
+                "value": 2,
+                "review": a.review if a else "unknown",
+            })
+        for r in db.query(_R).filter(
+                _R.source_id.in_(list(cited)),
+                _R.target_id.in_(list(cited))).all():
+            meta = _D.RELATIONSHIP_TYPES.get(r.relationship_type or "", {})
+            edges.append({
+                "id": f"e:{r.id}", "from": f"a:{r.source_id}",
+                "to": f"a:{r.target_id}",
+                "label": r.relationship_type or "",
+                "title": (r.description or "")[:200],
+                "color": {"color": meta.get("color", "#8b949e")},
+                "dashes": bool(meta.get("dashes")),
+            })
+    return {
+        "thread_id": root_id,
+        "nodes": nodes, "edges": edges,
+        "counts": {
+            "messages": sum(1 for n in nodes if n["group"] == "message"),
+            "artifacts": sum(1 for n in nodes if n["group"] == "artifact"),
+            "web": sum(1 for n in nodes if n["group"] == "web"),
+        },
+    }

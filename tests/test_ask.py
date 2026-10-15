@@ -262,3 +262,66 @@ def test_agents_ask_intent_queues(client):
     r = client.post("/api/agents/invoke", json={
         "to": "ask", "intent": "ask.answer", "payload": {}})
     assert r.status_code == 400
+
+
+def test_thread_graph_names_messages_evidence_and_edges(client):
+    inv = _seed_collected(client)
+    root = _ask(client)
+    full = client.get(f"/api/explanations/{root['id']}").json()
+    assert full["trace"]["artifact_ids"], "the stub answer cites collected rows"
+    g = client.get(f"/api/explanations/{root['id']}/graph").json()
+    by_group: dict = {}
+    for n in g["nodes"]:
+        by_group.setdefault(n["group"], []).append(n["id"])
+    assert by_group["message"] == [f"e:{root['id']}"]
+    # Cited collected artifacts appear as domain-colored nodes.
+    assert len(by_group.get("artifact", [])) == 2
+    assert all(i.startswith("a:") for i in by_group["artifact"])
+    # Live-web sources appear as their own nodes.
+    assert len(by_group.get("web", [])) == 1
+    assert by_group["web"][0].startswith("w:")
+    labels = {e["label"] for e in g["edges"]}
+    assert "cites" in labels
+    assert g["counts"]["messages"] == 1
+    assert g["counts"]["web"] == 1
+    # Addressable from any member; unknown ids 404.
+    assert client.get(
+        f"/api/explanations/{root['id']}/graph").status_code == 200
+    assert client.get("/api/explanations/999999/graph").status_code == 404
+
+
+def test_thread_graph_draws_evidence_edges_and_branches(client):
+    inv = _seed_collected(client)
+    arts = client.get(
+        f"/api/investigations/{inv['id']}/artifacts").json()["artifacts"]
+    a, b = arts[0]["id"], arts[1]["id"]
+    client.post("/api/relationships", json={
+        "investigation_id": inv["id"], "source_id": a,
+        "target_id": b, "relationship_type": "transmits_to"})
+    root = _ask(client)
+    client.post(f"/api/explanations/{root['id']}/followup",
+                json={"question": "Branch A?"})
+    client.post(f"/api/explanations/{root['id']}/followup",
+                json={"question": "Branch B?"})
+    _drain()
+    g = client.get(f"/api/explanations/{root['id']}/graph").json()
+    assert g["counts"]["messages"] == 3
+    reply_tos = [e for e in g["edges"] if e["label"] == "reply_to"]
+    assert len(reply_tos) == 2  # both branches hang off the root
+    assert {e["from"] for e in reply_tos} == {f"e:{root['id']}"}
+    # reply_to edges only ever join messages (artifact ids live under a:).
+    assert all(e["from"].startswith("e:") and e["to"].startswith("e:")
+               for e in reply_tos)
+    assert any(e["label"] == "transmits_to" for e in g["edges"])
+
+
+def test_thread_graph_without_citations_still_graphs(client):
+    inv = client.post("/api/investigations", json={"title": "t"}).json()
+    client.post(f"/api/investigations/{inv['id']}/explain",
+                json={"question": "What about quantum?"})
+    _drain()
+    root = client.get(
+        f"/api/investigations/{inv['id']}/explanations").json()["explanations"][0]
+    g = client.get(f"/api/explanations/{root['id']}/graph").json()
+    assert g["counts"] == {"messages": 1, "artifacts": 0, "web": 0}
+    assert g["edges"] == []

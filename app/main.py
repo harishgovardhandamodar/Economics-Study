@@ -2053,6 +2053,17 @@ def explanation_tree(exp_id: int, db: Session = Depends(get_db)):
     return {"thread_id": root_id, "tree": tree}
 
 
+@app.get("/api/explanations/{exp_id}/graph")
+def explanation_graph(exp_id: int, db: Session = Depends(get_db)):
+    """One thread as a knowledge graph next to the thread view: messages,
+    cited artifacts, web sources, and the evidence edges between them."""
+    from . import ask as _ask
+    g = _ask.thread_graph(db, exp_id)
+    if g is None:
+        raise HTTPException(404, "no such explanation")
+    return g
+
+
 class PromoteIn(BaseModel):
     explanation_id: int
     collect: bool = True

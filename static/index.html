@@ -190,6 +190,8 @@ label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-wei
 #graph{flex:1;min-height:0;background:var(--graph-bg);border-radius:0}
 #briefGraph{height:420px;background:var(--graph-bg);border:1px solid var(--border);
   border-radius:9px}
+#askGraph{height:300px;background:var(--graph-bg);border:1px solid var(--border);
+  border-radius:9px;margin-bottom:6px}
 .mermaid{display:flex;justify-content:center;margin:14px 0;overflow-x:auto}
 .mermaid svg{max-width:100%;height:auto}
 .doc-index{display:flex;flex-direction:column;gap:6px}
@@ -1672,22 +1674,67 @@ async function openAskThread(id) {
   const box = $('#askThread');
   if (!box) return;
   try {
-    const data = await api('/api/explanations/' + id + '/tree');
+    const [data, graph] = await Promise.all([
+      api('/api/explanations/' + id + '/tree'),
+      api('/api/explanations/' + id + '/graph').catch(() => null),
+    ]);
     box.innerHTML = `<div class="card" style="background:var(--bg)">
-      <h3><i class="fas fa-comments"></i> Thread</h3>
+      <h3><i class="fas fa-comments"></i> Thread
+        <span class="sub">graph above, conversation below — both clickable</span></h3>
+      <div id="askGraph"></div>
+      <div style="font-size:11px;color:var(--text3);margin:6px 0 12px">
+        Blue messages · domain-colored evidence · amber live web.
+        Click a message to jump to it, evidence to open it.</div>
       ${renderAskNode(data.tree, 0)}
     </div>`;
     const root = $('#askThread');
     if (root) { root.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    if (graph) drawAskGraph(graph);
     hydrateMermaid(box);
   } catch (e) { box.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; }
+}
+
+function drawAskGraph(data) {
+  const container = $('#askGraph');
+  if (!container) return;
+  State.askNetwork?.destroy();
+  const nodes = new vis.DataSet((data.nodes || []).map(n => ({
+    id: n.id, label: n.label, title: n.title, shape: 'dot',
+    size: n.group === 'message' ? 20 : 10 + Math.min(12, (n.value || 1) * 2),
+    color: n.color, font: { size: 11, color: getComputedStyle(document.body).color },
+    opacity: n.review === 'rejected' ? 0.28 : 1.0,
+  })));
+  const edges = new vis.DataSet((data.edges || []).map(e => ({
+    id: e.id, from: e.from, to: e.to, arrows: 'to',
+    color: e.color, dashes: !!e.dashes, font: { size: 9, strokeWidth: 3 },
+  })));
+  State.askNetwork = new vis.Network(container, { nodes, edges }, {
+    physics: { solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -70, centralGravity: 0.01,
+        springLength: 150, springConstant: 0.05, damping: 0.5 },
+      stabilization: { iterations: 180 } },
+    interaction: { hover: true, tooltipDelay: 110 },
+  });
+  State.askNetwork.on('click', (params) => {
+    const nid = params.nodes[0];
+    if (typeof nid !== 'string') return;
+    if (nid.startsWith('a:')) showArtifact(parseInt(nid.slice(2), 10));
+    else if (nid.startsWith('w:')) {
+      const n = nodes.get(nid);
+      if (n?.title) window.open(n.title, '_blank', 'noopener');
+    } else if (nid.startsWith('e:')) {
+      const mid = parseInt(nid.slice(2), 10);
+      const target = document.getElementById('askmsg-' + mid);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
 }
 
 function renderAskNode(n, depth) {
   const conf = n.confidence ?? 0;
   const confColor = conf >= 0.6 ? 'var(--green)' : conf >= 0.35 ? 'var(--orange)' : 'var(--red)';
   const kids = (n.children || []).map(c => renderAskNode(c, depth + 1)).join('');
-  return `<div class="ask-node ${depth === 0 ? 'root' : ''}">
+  return `<div class="ask-node ${depth === 0 ? 'root' : ''}" id="askmsg-${n.id}">
     <div class="ask-q">${esc(n.question)}</div>
     ${n.status === 'done' && n.answer ? `<div class="answer">${renderAnswer(n.answer)}</div>` : ''}
     ${n.status === 'no_evidence' ? `<div class="banner warn" style="margin:8px 0">
