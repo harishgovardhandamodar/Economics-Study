@@ -207,6 +207,16 @@ mark{background:rgba(88,166,255,.3);color:inherit;border-radius:3px;
   margin-bottom:12px}
 .ask-node.root{border-left-color:var(--accent)}
 .ask-q{font-weight:600;font-size:13.5px;line-height:1.5;margin-bottom:8px}
+.chat-row{margin-bottom:12px}
+.chat-row.open .chat-bubble.q{border-color:var(--orange)}
+.chat-bubble{max-width:82%;padding:9px 13px;border-radius:13px;font-size:13px;
+  line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.chat-bubble.q{background:var(--accent);color:#fff;margin-left:auto;
+  border-bottom-right-radius:4px;width:fit-content}
+.chat-bubble.a{background:var(--bg3);border:1px solid var(--border);
+  margin-top:7px;border-bottom-left-radius:4px}
+.chat-meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+  margin-top:7px;font-size:11px}
 .legend{position:absolute;left:14px;bottom:14px;background:var(--bg2);
   border:1px solid var(--border);border-radius:9px;padding:12px;max-width:250px;
   font-size:11px;z-index:10;box-shadow:0 6px 22px rgba(0,0,0,.4)}
@@ -1964,12 +1974,20 @@ async function openSearchDoc(type, id, invId) {
 // Imported chat history as a clustered graph: group hubs plus member items,
 // orange pending and green answered. Navigation, not evidence — clicking an
 // item opens its thread in the Ask tab, clicking a hub scopes to the group.
+// ---------- imports ----------
+// Imported chat history, two ways to navigate it. Conversations renders each
+// import as the chat it was — user right, assistant left, in original order.
+// Clusters renders the content-group graph for jumping between topics. Both
+// read the same endpoints; the toggle only changes the lens.
 async function viewImports(el) {
   el.className = 'view';
   const group = State.importsGroup || '';
-  const [g, list] = await Promise.all([
-    api('/api/ask/imports/graph' + (group ? '?group=' + encodeURIComponent(group) : '')).catch(() => ({ nodes: [], edges: [], groups: [], counts: {} })),
+  const mode = State.importsMode || 'chats';
+  const q = group ? '?group=' + encodeURIComponent(group) : '';
+  const [g, list, convs] = await Promise.all([
+    api('/api/ask/imports/graph' + q).catch(() => ({ nodes: [], edges: [], groups: [], counts: {} })),
     api('/api/ask/imports?limit=100' + (group ? '&group=' + encodeURIComponent(group) : '')).catch(() => ({ threads: [], groups: [] })),
+    api('/api/ask/imports/conversations' + (group ? '?group=' + encodeURIComponent(group) : '')).catch(() => ({ conversations: [] })),
   ]);
   const counts = g.counts || {};
   const done = list.threads.filter(t => t.status === 'done').length;
@@ -1981,20 +1999,71 @@ async function viewImports(el) {
       <div class="stat"><div class="n" style="color:var(--orange)">${(counts.items ?? 0) - done}</div><div class="l">Awaiting answer</div></div>
     </div>
     <div class="card">
-      <h3><i class="fas fa-box-archive"></i> Import clusters
-        <span class="sub">grey hubs are content groups — click one to scope, click an item to open its thread</span></h3>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <button class="btn sm ${mode === 'chats' ? 'primary' : ''}" onclick="setImportsMode('chats')">
+          <i class="fas fa-comments"></i> Conversations</button>
+        <button class="btn sm ${mode === 'clusters' ? 'primary' : ''}" onclick="setImportsMode('clusters')">
+          <i class="fas fa-diagram-project"></i> Clusters</button>
+        <span style="flex:1"></span>
         <button class="btn sm ${group ? '' : 'primary'}" onclick="setImportsGroup('')">All groups</button>
         ${(g.groups || []).map(x => `<button class="btn sm ${group === x.group ? 'primary' : ''}"
           onclick="setImportsGroup('${esc(x.group).replace(/'/g, "\\'")}')">${esc(x.group)} (${x.count})</button>`).join('')}
       </div>
+      <div id="importsBody"></div>
+    </div>`;
+  if (mode === 'clusters') renderImportsClusters(g, list);
+  else renderImportsChats(convs);
+}
+
+function setImportsGroup(g) {
+  State.importsGroup = g || null;
+  refreshView();
+}
+
+function setImportsMode(m) {
+  State.importsMode = m;
+  refreshView();
+}
+
+function renderImportsChats(convs) {
+  const box = $('#importsBody');
+  if (!box) return;
+  const rows = convs.conversations || [];
+  box.innerHTML = rows.map(c => `
+    <div class="card" style="background:var(--bg);margin-bottom:12px">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px">
+        <strong style="font-size:13.5px">${esc(c.title.slice(0, 90))}</strong>
+        <span class="tag">${esc(c.group)}</span>
+        <span style="color:var(--text3);font-size:11px">
+          ${c.items.length} turn${c.items.length === 1 ? '' : 's'} · ${c.open ? c.open + ' open' : 'all answered'}</span>
+      </div>
+      ${c.items.map(it => `
+        <div class="chat-row ${it.answer ? '' : 'open'}">
+          <div class="chat-bubble q">${esc(it.question)}</div>
+          ${it.answer
+            ? `<div class="chat-bubble a">${esc(it.answer.slice(0, 1200))}${it.answer.length > 1200 ? '…' : ''}</div>
+               <div class="chat-meta">${(it.tags || []).slice(0, 4).map(tag => `<span class="tag" style="color:var(--teal)">${esc(tag)}</span>`).join('')}</div>`
+            : `<div class="chat-meta"><span class="tag" style="color:var(--orange)">awaiting answer</span>
+               <button class="btn sm primary" onclick="answerImported(${it.id})">Answer</button>
+               <button class="btn sm" onclick="openImportThread(${it.id})">Open thread</button></div>`}
+        </div>`).join('')}
+    </div>`).join('') || '<div class="empty">Nothing imported yet — use Ask → Import history.</div>';
+}
+
+function renderImportsClusters(g, list) {
+  const box = $('#importsBody');
+  if (!box) return;
+  box.innerHTML = `
+    <div class="card" style="background:var(--bg);margin-bottom:0">
+      <h3><i class="fas fa-diagram-project"></i> Import clusters
+        <span class="sub">grey hubs are content groups — click one to scope, click an item to open its thread</span></h3>
       <div id="importsGraph"></div>
       <div style="font-size:11px;color:var(--text3);margin-top:8px">
         Orange items await an answer · green are answered.</div>
     </div>
-    <div class="card"><h3><i class="fas fa-list"></i> Items
-      <span class="sub">${list.threads.length} shown</span></h3>
-      <div id="importsList">${list.threads.map(t => `
+    <div class="card" style="background:var(--bg)">
+      <h3><i class="fas fa-list"></i> Items <span class="sub">${list.threads.length} shown</span></h3>
+      ${list.threads.map(t => `
         <div class="source-item" style="margin-bottom:7px">
           <div style="cursor:pointer" onclick="openImportThread(${t.id})">
             <strong>${esc(t.question.slice(0, 110))}</strong></div>
@@ -2007,15 +2076,11 @@ async function viewImports(el) {
             <button class="btn sm" onclick="openImportThread(${t.id})">Open thread</button>
             ${t.status === 'imported' ? `<button class="btn sm primary" onclick="answerImported(${t.id})">Answer</button>` : ''}
           </div>
-        </div>`).join('') || '<div class="empty">Nothing imported yet — use Ask → Import history.</div>'}</div>
+        </div>`).join('') || '<div class="empty">Nothing imported yet — use Ask → Import history.</div>'}
     </div>`;
   drawImportsGraph(g);
 }
 
-function setImportsGroup(g) {
-  State.importsGroup = g || null;
-  refreshView();
-}
 
 function openImportThread(id) {
   State.askOpen = id;

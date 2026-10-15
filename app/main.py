@@ -2062,6 +2062,15 @@ def ask_imports_graph(group: str | None = None,
     return _ask.imports_graph(db, group)
 
 
+@app.get("/api/ask/imports/conversations")
+def ask_imports_conversations(group: str | None = None, limit: int = 50,
+                              db: Session = Depends(get_db)):
+    """Imported history as conversations: turns in original order with answers
+    inline, newest conversation first. The conversational view reads this."""
+    from . import ask as _ask
+    return _ask.import_conversations(db, group, limit=min(limit, 100))
+
+
 @app.post("/api/ask/import")
 async def ask_import(request: Request, db: Session = Depends(get_db)):
     """Import a Google AI Mode / Takeout / chat-export history as threads.

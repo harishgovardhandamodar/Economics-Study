@@ -614,3 +614,50 @@ def test_import_rejects_over_cap(client, monkeypatch):
                     files={"file": ("big.json", b'{"queries": ["' + b"x" * 200 + b'"]}')})
     assert r.status_code == 400
     assert "cap" in r.json()["detail"]
+
+
+def test_import_conversations_endpoint_groups_turns(client):
+    import json as _json
+    _upload(client, _json.dumps({"conversations": [
+        {"title": "Tariff chat",
+         "messages": [
+             {"role": "user", "content": "Will tariffs raise CPI?"},
+             {"role": "assistant", "content": "Yes, via import prices."},
+             {"role": "user", "content": "And Suez freight?"}]},
+        {"title": "Rates chat",
+         "messages": [{"role": "user", "content": "ECB next move?"}]},
+    ]}).encode())
+    convs = client.get("/api/ask/imports/conversations").json()
+    assert convs["count"] == 2
+    tariff = [c for c in convs["conversations"]
+              if c["title"] == "Tariff chat"][0]
+    assert [i["question"] for i in tariff["items"]] == [
+        "Will tariffs raise CPI?", "And Suez freight?"]
+    assert tariff["items"][0]["answer"].startswith("Yes, via import")
+    assert tariff["items"][1]["answer"] == ""
+    assert tariff["answered"] == 1 and tariff["open"] == 1
+    # Flat Takeout rows stand alone under their own question.
+    _upload(client, _json.dumps(
+        [{"query": "Lone question?"}]).encode())
+    convs = client.get("/api/ask/threads?limit=100").json()
+    assert convs["count"] >= 3
+    solo = client.get("/api/ask/imports/conversations").json()
+    lone = [c for c in solo["conversations"]
+            if len(c["items"]) == 1 and c["items"][0]["question"] == "Lone question?"]
+    assert lone
+
+
+def test_import_conversations_group_filter(client):
+    import json as _json
+    _upload(client, _json.dumps({"conversations": [
+        {"title": "A", "messages": [
+            {"role": "user", "content": "Will tariffs raise CPI?"}]},
+        {"title": "B", "messages": [
+            {"role": "user", "content": "Suez canal freight rates"}]},
+    ]}).encode())
+    all_convs = client.get("/api/ask/imports/conversations").json()
+    g = all_convs["conversations"][0]["group"]
+    scoped = client.get(
+        f"/api/ask/imports/conversations?group={g}").json()
+    assert scoped["count"] >= 1
+    assert all(c["group"] == g for c in scoped["conversations"])

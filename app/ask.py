@@ -407,6 +407,67 @@ def _trace_of(e) -> dict:
         return {}
 
 
+IMPORTS_CONVERSATIONS_LIMIT = 100
+
+
+def import_conversations(db, group: str | None = None,
+                         limit: int = 50) -> dict:
+    """Imported history as conversations: Q&A turns in original order.
+
+    Items that arrived in one conversation (one export entry, one Markdown
+    transcript) render as one chat; lone questions stand alone. Each turn
+    carries its answer when the export had one, its tags, and whether it is
+    still awaiting an answer — everything the conversational view needs in
+    one payload, newest conversation first.
+    """
+    from .models import Explanation as _E
+    rows = (db.query(_E).filter(_E.parent_id.is_(None))
+            .order_by(_E.id.desc()).limit(500).all())
+    convs: dict[str, dict] = {}
+    order: list[str] = []
+    for r in rows:
+        t = _trace_of(r)
+        if not t.get("imported"):
+            continue
+        gname = t.get("import_group") or "imported"
+        if group is not None and gname != group:
+            continue
+        key = t.get("import_conversation") or f"single:{r.id}"
+        title = t.get("import_conversation") or (r.question or "")[:80]
+        conv = convs.get(key)
+        if conv is None:
+            conv = convs[key] = {
+                "key": key, "title": title, "group": gname,
+                "latest_id": r.id, "items": [],
+            }
+            order.append(key)
+        try:
+            tags = t.get("import_tags", [])
+            domains = json.loads(r.domains_json or "[]")
+        except Exception:
+            tags, domains = [], []
+        conv["items"].append({
+            "id": r.id, "question": r.question,
+            "answer": r.answer or "", "status": r.status,
+            "tags": tags if isinstance(tags, list) else [],
+            "domains": domains if isinstance(domains, list) else [],
+            "asked_at": t.get("imported_at"),
+            "created_at": r.created_at,
+        })
+        conv["latest_id"] = max(conv["latest_id"], r.id)
+    # Newest conversation first; turns oldest-first so chats read top-down.
+    ranked = sorted(order, key=lambda k: -convs[k]["latest_id"])[:limit]
+    out = []
+    for k in ranked:
+        conv = convs[k]
+        conv["items"].sort(key=lambda i: i["id"])
+        conv["answered"] = sum(1 for i in conv["items"] if i["answer"])
+        conv["open"] = sum(1 for i in conv["items"]
+                           if not i["answer"] and i["status"] == "imported")
+        out.append(conv)
+    return {"conversations": out, "count": len(out)}
+
+
 IMPORTS_GRAPH_LIMIT = 500
 
 
@@ -690,7 +751,8 @@ def _parse_content(content: bytes, filename: str = "") -> dict:
     items: list[dict] = []
     skipped = 0
     if name.endswith((".md", ".markdown")):
-        got, missed = _parse_markdown_conversation(text)
+        got, missed = _parse_markdown_conversation(
+            text, title_hint=(filename or "").rsplit("/", 1)[-1])
         return {"items": got, "skipped": missed}
     if name.endswith((".html", ".htm")) or text.lstrip()[:100].lower().startswith(
             ("<!doctype html", "<html")):
@@ -724,7 +786,11 @@ def _parse_content(content: bytes, filename: str = "") -> dict:
             if conv is not None:
                 paired = _pair_messages(conv)
                 if paired:
-                    items.extend({"question": q, "answer": a, "asked_at": t}
+                    title = e.get("title") if isinstance(e.get("title"), str) \
+                        else None
+                    items.extend({"question": q, "answer": a, "asked_at": t,
+                                  "conversation": (title or "").strip()[:200]
+                                  or None}
                                  for q, a, t in paired)
                 else:
                     skipped += 1
@@ -936,11 +1002,13 @@ _ROLE_HEADING = re.compile(
     r"answer|response|model)\b\s*:?\s*$", re.I)
 
 
-def _parse_markdown_conversation(text: str) -> tuple[list[dict], int]:
+def _parse_markdown_conversation(text: str, title_hint: str = ""
+                                 ) -> tuple[list[dict], int]:
     """A Markdown transcript with User/Assistant sections -> paired items.
 
     A .md file with no role headings is not a transcript: its prose lines are
     not questions, so it counts as one skip rather than N bogus imports.
+    The whole transcript is one conversation, titled by its first heading.
     """
     lines = (text or "").splitlines()
     sections: list[tuple[str, list[str]]] = []
@@ -963,7 +1031,15 @@ def _parse_markdown_conversation(text: str) -> tuple[list[dict], int]:
         if chunk:
             messages.append({"role": role, "content": chunk})
     paired = _pair_messages(messages)
-    return ([{"question": q, "answer": a, "asked_at": t}
+    title = None
+    for line in (text or "").splitlines():
+        s = line.strip().lstrip("#").strip()
+        if s and not _ROLE_HEADING.match(line.strip()):
+            title = s[:200]
+            break
+    if not title and title_hint:
+        title = title_hint.rsplit(".", 1)[0][:200]
+    return ([{"question": q, "answer": a, "asked_at": t, "conversation": title}
              for q, a, t in paired], 0)
 
 
@@ -1061,6 +1137,8 @@ def import_history(db, items: list[dict]) -> dict:
                 "imported": True,
                 "import_tags": tags,
                 "import_group": group,
+                "import_conversation": (item.get("conversation") or "")[:200]
+                or None,
                 "imported_at": item.get("asked_at"),
             }))
         db.add(row)
