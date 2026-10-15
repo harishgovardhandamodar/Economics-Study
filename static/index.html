@@ -6,6 +6,7 @@
 <title>Economics Cross-Domain Mapper</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.6/standalone/umd/vis-network.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.4/dist/mermaid.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
 <style>
 :root{
@@ -176,6 +177,15 @@ label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-wei
 
 /* ---------- graph ---------- */
 #graph{flex:1;min-height:0;background:var(--graph-bg);border-radius:0}
+#briefGraph{height:420px;background:var(--graph-bg);border:1px solid var(--border);
+  border-radius:9px}
+.mermaid{display:flex;justify-content:center;margin:14px 0;overflow-x:auto}
+.mermaid svg{max-width:100%;height:auto}
+.doc-index{display:flex;flex-direction:column;gap:6px}
+.doc-item{border:1px solid var(--border);border-radius:8px;padding:10px 12px;
+  background:var(--bg);cursor:pointer}
+.doc-item:hover{border-color:var(--accent)}
+.doc-item.active{border-color:var(--accent);background:var(--bg3)}
 .legend{position:absolute;left:14px;bottom:14px;background:var(--bg2);
   border:1px solid var(--border);border-radius:9px;padding:12px;max-width:250px;
   font-size:11px;z-index:10;box-shadow:0 6px 22px rgba(0,0,0,.4)}
@@ -385,12 +395,16 @@ table.tbl tr:hover td{background:var(--bg2)}
         <i class="fas fa-scale-balanced"></i> Assessment</div>
       <div class="tab" data-view="board" onclick="switchView('board')">
         <i class="fas fa-building-columns"></i> Board</div>
+      <div class="tab" data-view="brief" onclick="switchView('brief')">
+        <i class="fas fa-briefcase"></i> Executive brief</div>
       <div class="tab" data-view="manager" onclick="switchView('manager')">
         <i class="fas fa-diagram-project"></i> Manager</div>
       <div class="tab" data-view="frameworks" onclick="switchView('frameworks')">
         <i class="fas fa-landmark"></i> Frameworks</div>
       <div class="tab" data-view="agents" onclick="switchView('agents')">
         <i class="fas fa-robot"></i> Agents</div>
+      <div class="tab" data-view="design" onclick="switchView('design')">
+        <i class="fas fa-drafting-compass"></i> Design</div>
       <div class="tab" data-view="summary" onclick="switchView('summary')">
         <i class="fas fa-chart-pie"></i> Summary</div>
       <div class="tab" data-view="console" onclick="switchView('console')">
@@ -619,7 +633,10 @@ function switchView(view) {
 
 async function refreshView() {
   const el = $('#view');
-  if (!State.invId) {
+  // Brief and Design are estate-wide: they work with zero investigations.
+  // Everything else needs one selected first.
+  const GLOBAL_VIEWS = new Set(['brief', 'design']);
+  if (!State.invId && !GLOBAL_VIEWS.has(State.view)) {
     el.className = 'view';
     el.innerHTML = `<div class="empty" style="padding-top:70px">
       <i class="fas fa-chart-network" style="font-size:38px;opacity:.35;display:block;margin-bottom:14px"></i>
@@ -629,8 +646,8 @@ async function refreshView() {
   const fns = {
     graph: viewGraph, artifacts: viewArtifacts, review: viewReview,
     gaps: viewGaps, explainer: viewExplainer, assess: viewAssess,
-    board: viewBoard, manager: viewManager, frameworks: viewFrameworks,
-    agents: viewAgents,
+    board: viewBoard, brief: viewBrief, manager: viewManager,
+    frameworks: viewFrameworks, agents: viewAgents, design: viewDesign,
     summary: viewSummary,
     console: viewConsole, timeline: viewTimeline, audit: viewAudit,
   };
@@ -1318,6 +1335,163 @@ async function submitDecision(id) {
       expires_at: $('#decExp').value.trim() || null }) });
     closeModal(); await refreshView(); toast('Decision recorded on the ledger.', 'ok');
   } catch (e) { toast(e.message, 'err'); }
+}
+
+// ---------- executive brief ----------
+async function viewBrief(el) {
+  el.className = 'view';
+  const [b, g, cat, sim] = await Promise.all([
+    api('/api/leadership/board'),
+    api('/api/leadership/knowledge-graph').catch(() => ({ nodes: [], edges: [], counts: {} })),
+    api('/api/leadership/knowledge-graph/clusters?mode=category').catch(() => ({ by_domain: {} })),
+    api('/api/leadership/knowledge-graph/clusters?mode=similarity').catch(() => ({ bridges: [] })),
+  ]);
+  const counts = g.counts || {};
+  el.innerHTML = `
+    <div class="grid c4" style="margin-bottom:14px">
+      <div class="stat"><div class="n">${counts.artifacts ?? 0}</div><div class="l">Artifacts estate-wide</div></div>
+      <div class="stat"><div class="n">${counts.investigations ?? 0}</div><div class="l">Sessions</div></div>
+      <div class="stat"><div class="n" style="color:var(--accent)">${b.exposure.mean_exposure}%</div><div class="l">Mean exposure</div></div>
+      <div class="stat"><div class="n" style="color:var(--${b.alerts.count ? 'orange' : 'green'})">${b.alerts.count}</div><div class="l">Alerts</div></div>
+    </div>
+    <div class="card">
+      <h3><i class="fas fa-project-diagram"></i> Global knowledge graph
+        <span class="sub">every session, one map — grey hubs are investigations, colors are domains</span></h3>
+      ${g.truncated ? `<div class="banner warn"><i class="fas fa-triangle-exclamation"></i>
+        <span>Showing ${counts.artifacts_shown} of ${counts.artifacts} artifacts (cap ${g.limit}). Scope by session from the Board if you need the rest.</span></div>` : ''}
+      <div id="briefGraph"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">
+        Click an artifact node for its overlay · click a grey hub to open that session's own graph.</div>
+    </div>
+    <div class="grid c2">
+      <div class="card"><h3><i class="fas fa-layer-group"></i> Clusters by domain</h3>
+        <table class="tbl"><thead><tr><th>Domain</th><th style="text-align:right">Artifacts</th></tr></thead><tbody>
+        ${Object.entries(cat.by_domain || {}).map(([d, c]) => `<tr>
+          <td><span class="dot" style="background:${domColor(d)}"></span> ${esc(domLabel(d))}</td>
+          <td style="text-align:right">${c.artifacts}</td></tr>`).join('') ||
+          '<tr><td colspan="2" class="empty">Nothing collected anywhere yet.</td></tr>'}
+        </tbody></table></div>
+      <div class="card"><h3><i class="fas fa-link"></i> Cross-session bridges
+        <span class="sub">one session's evidence bearing on another's question</span></h3>
+        ${(sim.bridges || []).slice(0, 12).map(br => `
+          <div class="source-item" style="margin-bottom:7px">
+            <div style="cursor:pointer" onclick="showArtifact(${br.a_id})">
+              <strong>${esc(br.a_title)}</strong>
+              <span style="color:var(--text3);font-size:11px"> (session ${br.a_investigation})</span></div>
+            <div style="text-align:center;color:var(--text3);font-size:11px;margin:3px 0">shares ${br.shared.map(esc).join(', ')} with</div>
+            <div style="cursor:pointer" onclick="showArtifact(${br.b_id})">
+              <strong>${esc(br.b_title)}</strong>
+              <span style="color:var(--text3);font-size:11px"> (session ${br.b_investigation})</span></div>
+          </div>`).join('') || '<div class="empty">No shared-actor bridges between sessions.</div>'}
+        ${b.alerts.alerts.length ? `<h3 style="margin-top:14px"><i class="fas fa-bell"></i> Alerts</h3>
+          ${b.alerts.alerts.slice(0, 6).map(a => `<div class="banner ${a.severity === 'info' ? 'info' : 'warn'}" style="margin-bottom:8px">
+            <i class="fas fa-${a.severity === 'info' ? 'info' : 'triangle-exclamation'}"></i>
+            <span><strong>${esc(a.title)}</strong> — ${esc(a.detail)}</span></div>`).join('')}` : ''}
+      </div>
+    </div>`;
+  drawBriefGraph(g);
+}
+
+function drawBriefGraph(data) {
+  const container = $('#briefGraph');
+  if (!container) return;
+  State.briefNetwork?.destroy();
+  const nodes = new vis.DataSet((data.nodes || []).map(n => ({
+    id: n.id, label: n.label, title: n.title, shape: 'dot',
+    size: n.group === 'investigation' ? 22 : 10 + Math.min(14, (n.value || 1) * 2),
+    color: n.color, font: { size: 11, color: getComputedStyle(document.body).color },
+    opacity: n.review === 'rejected' ? 0.28 : 1.0,
+  })));
+  const edges = new vis.DataSet((data.edges || []).map(e => ({
+    id: e.id, from: e.from, to: e.to, arrows: 'to',
+    color: e.color, dashes: !!e.dashes,
+  })));
+  State.briefNetwork = new vis.Network(container, { nodes, edges }, {
+    physics: { solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -60, centralGravity: 0.008,
+        springLength: 160, springConstant: 0.045, damping: 0.5 },
+      stabilization: { iterations: 200 } },
+    interaction: { hover: true, tooltipDelay: 110 },
+  });
+  State.briefNetwork.on('click', (params) => {
+    const id = params.nodes[0];
+    if (typeof id !== 'string') return;
+    if (id.startsWith('a:')) showArtifact(parseInt(id.slice(2), 10));
+    else if (id.startsWith('inv:')) {
+      State.invId = parseInt(id.slice(4), 10);
+      renderSidebar();
+      switchView('graph');
+    }
+  });
+}
+
+// ---------- design docs ----------
+async function viewDesign(el) {
+  el.className = 'view';
+  const idx = await api('/api/design/docs').catch(() => ({ available: false, docs: [] }));
+  if (!idx.available) {
+    el.innerHTML = `<div class="banner warn"><i class="fas fa-triangle-exclamation"></i>
+      <span>Design documents are not shipped in this build.</span></div>`;
+    return;
+  }
+  const groups = {};
+  idx.docs.forEach(d => { (groups[d.group] ||= []).push(d); });
+  el.innerHTML = `
+    <div class="grid" style="grid-template-columns:300px 1fr;align-items:start">
+      <div class="card"><h3><i class="fas fa-drafting-compass"></i> Design set</h3>
+        <div class="doc-index">
+          ${Object.entries(groups).map(([g, docs]) => `
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;
+              color:var(--text3);margin:8px 0 2px">${esc(g)}</div>
+            ${docs.map(d => `<div class="doc-item" id="doc-${d.id}" onclick="renderDoc('${d.id}')">
+              <div style="font-weight:600;font-size:12.5px">${esc(d.title)}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:3px">${esc(d.answers)}</div>
+            </div>`).join('')}`).join('')}
+        </div></div>
+      <div class="card"><div id="docViewer"><div class="empty">Select a document.</div></div></div>
+    </div>`;
+  State.designDocs = idx.docs;
+}
+
+async function renderDoc(id) {
+  $$('.doc-item').forEach(d => d.classList.toggle('active', d.id === 'doc-' + id));
+  const v = $('#docViewer');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const doc = await api('/api/design/docs/' + id);
+    // Pull mermaid blocks out BEFORE marked sees them: marked would escape
+    // the arrows (-->) into entities mermaid cannot parse back.
+    const blocks = [];
+    const fenced = doc.markdown.replace(/```mermaid\n([\s\S]*?)```/g, (m, code) => {
+      blocks.push(code);
+      return '\n\n<div class="mermaid-src" data-i="' + (blocks.length - 1) + '"></div>\n\n';
+    });
+    v.innerHTML = '<div class="answer">' + marked.parse(fenced) + '</div>';
+    const spots = v.querySelectorAll('.mermaid-src');
+    if (!spots.length) return;
+    if (!window.mermaid) {
+      spots.forEach(s => {
+        s.outerHTML = '<pre>' + esc(blocks[+s.dataset.i]) + '</pre>';
+      });
+      toast('Diagrams need the mermaid CDN (offline?) — showing source.', 'err');
+      return;
+    }
+    try {
+      mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+      for (const s of spots) {
+        const code = blocks[+s.dataset.i];
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = code;
+        s.replaceWith(div);
+      }
+      await mermaid.run({ nodes: v.querySelectorAll('.mermaid') });
+    } catch (e) {
+      v.querySelectorAll('.mermaid').forEach(d => {
+        d.outerHTML = '<pre>' + esc(d.textContent) + '</pre>';
+      });
+    }
+  } catch (e) { v.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>'; }
 }
 
 // ---------- summary ----------

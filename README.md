@@ -413,6 +413,16 @@ caps fast; directional mass decides.
 intent deterministic over stored rows. Invoke one hop directly from
 `POST /api/agents/invoke`.
 
+**Executive brief** — estate-wide and works with zero investigations: headline
+numbers, the global knowledge graph across sessions (grey hubs are
+investigations, colors are domains; click a hub to open that session's graph),
+clusters by domain, cross-session bridges where one session's evidence bears
+on another's question, plus alerts.
+
+**Design** — the eight design documents as a selectable index, rendered with
+diagrams live (Mermaid via CDN, source fallback offline). Served from a
+constant index, never a directory listing, so no input can become a path.
+
 PDFs attach where they belong: the dossier, each assessment, and the board all
 offer a PDF button next to their Markdown one. Rendered in-process with
 reportlab — no chromium, no LaTeX in the image.
@@ -509,6 +519,8 @@ mapper too would only prove the mocks agree with each other.
 | `test_leadership_manager.py` | Empty board is honest; parse is side-effect free; run → compile → idempotent compile |
 | `test_small_surfaces.py` | Hide, prefs, feedback, save-to-graph dedupe, gap runs, similar, recommendations, compare |
 | `test_remaining.py` | SIEM cursor export + minimised payloads; framework matrix scoring; A2A invoke incl. rejections; real PDFs + hostile-markup renderer test |
+| `test_brief_design.py` | Design index/fetch + traversal rejection + missing-dir honesty; global graph namespacing/hubs/scoping; category + cross-session similarity clusters |
+| `test_frontend.py` | Static GUI checks: every `$('#X')` resolves; no backticks inside onclick attributes |
 
 ---
 
@@ -540,7 +552,8 @@ app/
   frameworks.py      12 policy regimes scored against collected evidence
   agents.py          A2A cards + deterministic dispatch
   dossier_pdf.py     reportlab A4 reports (dossier, assessment, board)
-  main.py            the API (104 paths)
+  design_docs.py     the design set as selectable documents (index, never listing)
+  main.py            the API (109 paths)
 static/index.html    the GUI
 scripts/seed.py      five cross-domain investigations
 ```

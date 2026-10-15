@@ -213,6 +213,143 @@ def knowledge_graph(db, investigation_id: int | None = None) -> dict[str, Any]:
     }
 
 
+# Cap for the estate-wide graph. A portfolio graph is large on purpose, but an
+# uncapped vis-network with tens of thousands of nodes is not a view, it is a
+# hang. The cap is reported, never silent.
+GLOBAL_GRAPH_LIMIT = 1500
+
+
+def global_graph(db, investigation_ids: list[int] | None = None) -> dict[str, Any]:
+    """Every collected artifact and every relationship, across sessions.
+
+    Node ids are namespaced (``a:`` artifacts, ``inv:`` investigations) so a
+    portfolio-wide graph cannot collide with itself. Investigation hubs show
+    "what collected what" at a glance instead of leaving it implied by a
+    foreign key. Artifact nodes carry domain colors from the same map the
+    per-investigation graph uses.
+    """
+    from datetime import UTC, datetime
+
+    from . import domains as D
+    from .models import Artifact, Investigation, Relationship
+    aq = db.query(Artifact).order_by(Artifact.id)
+    rq = db.query(Relationship)
+    if investigation_ids:
+        aq = aq.filter(Artifact.investigation_id.in_(investigation_ids))
+        rq = rq.filter(Relationship.investigation_id.in_(investigation_ids))
+    total = aq.count()
+    arts = aq.limit(GLOBAL_GRAPH_LIMIT + 1).all()
+    truncated = len(arts) > GLOBAL_GRAPH_LIMIT
+    arts = arts[:GLOBAL_GRAPH_LIMIT]
+    kept = {a.id for a in arts}
+    rels = [r for r in rq.all()
+            if r.source_id in kept and r.target_id in kept]
+    inv_ids = sorted({a.investigation_id for a in arts})
+    titles = {i.id: (i.title or "Untitled") for i in
+              db.query(Investigation).filter(Investigation.id.in_(inv_ids)).all()} \
+        if inv_ids else {}
+    nodes = [{
+        "id": f"a:{a.id}", "label": (a.title or "")[:60], "title": a.title or "",
+        "group": a.artifact_type or "news",
+        "domain": a.domain,
+        "color": {"background": D.domain_color(a.domain),
+                  "border": D.domain_color(a.domain)},
+        "value": max(1, int((a.relevance or 0) * 10) + 1),
+        "review": a.review or "pending", "drift": bool(a.drift),
+        "direction": a.direction, "magnitude": a.magnitude,
+        "investigation_id": a.investigation_id,
+        "investigation": titles.get(a.investigation_id, "Unknown"),
+    } for a in arts]
+    nodes += [{
+        "id": f"inv:{i}", "label": (titles.get(i, "") or "")[:40],
+        "title": f"Investigation {i}: {titles.get(i, '')}",
+        "group": "investigation",
+        "color": {"background": "#6e7681", "border": "#ffffff"},
+        "value": 3, "review": "accepted", "drift": False,
+        "investigation_id": i, "investigation": titles.get(i, ""),
+    } for i in inv_ids]
+    edges = [{
+        "id": f"e:{r.id}", "from": f"a:{r.source_id}", "to": f"a:{r.target_id}",
+        "label": r.relationship_type or "",
+        "title": (r.description or "")[:300],
+        "color": {"color": (D.RELATIONSHIP_TYPES.get(
+            r.relationship_type or "", {}) or {}).get("color", "#8b949e")},
+    } for r in rels]
+    edges += [{
+        "id": f"ei:{a.id}", "from": f"a:{a.id}",
+        "to": f"inv:{a.investigation_id}",
+        "label": "collected_in", "title": "collected in this investigation",
+        "color": {"color": "#6e7681"}, "dashes": True,
+    } for a in arts]
+    return {
+        "nodes": nodes, "edges": edges,
+        "generated": datetime.now(UTC).isoformat(),
+        "truncated": truncated, "limit": GLOBAL_GRAPH_LIMIT,
+        "counts": {"artifacts": total, "artifacts_shown": len(arts),
+                   "investigations": len(inv_ids),
+                   "relationships": len(rels)},
+    }
+
+
+def global_clusters(db, investigation_ids: list[int] | None = None,
+                    mode: str = "category") -> dict[str, Any]:
+    """Cluster the estate-wide graph two ways.
+
+    ``category`` groups artifacts by domain — which the taxonomy already
+    knows, so it is cheap and exact. ``similarity`` finds cross-session
+    bridges: pairs of artifacts in *different* investigations sharing a
+    distinctive entity, which is how one session's evidence turns out to bear
+    on another's question.
+    """
+    from .models import Artifact
+    q = db.query(Artifact).filter(Artifact.review != "rejected")
+    if investigation_ids:
+        q = q.filter(Artifact.investigation_id.in_(investigation_ids))
+    arts = q.limit(GLOBAL_GRAPH_LIMIT + 1).all()
+    truncated = len(arts) > GLOBAL_GRAPH_LIMIT
+    arts = arts[:GLOBAL_GRAPH_LIMIT]
+
+    by_domain: dict[str, list[int]] = {}
+    for a in arts:
+        if a.domain:
+            by_domain.setdefault(a.domain, []).append(a.id)
+    out: dict[str, Any] = {
+        "mode": mode, "truncated": truncated,
+        "n_artifacts": len(arts),
+        "by_domain": {d: {"artifacts": len(ids), "sample": ids[:12]}
+                      for d, ids in sorted(by_domain.items(),
+                                           key=lambda kv: -len(kv[1]))},
+    }
+    if mode == "similarity":
+        from .agent import _shared_entities
+        bridges = []
+        for i, a in enumerate(arts):
+            for b in arts[i + 1:]:
+                if a.investigation_id == b.investigation_id:
+                    continue
+                shared = _shared_entities(a.entities_json or [],
+                                          b.entities_json or [])
+                if shared:
+                    bridges.append({
+                        "a_id": a.id, "a_title": (a.title or "")[:80],
+                        "a_investigation": a.investigation_id,
+                        "b_id": b.id, "b_title": (b.title or "")[:80],
+                        "b_investigation": b.investigation_id,
+                        "shared": shared[:4],
+                    })
+                    if len(bridges) >= 200:
+                        break
+            if len(bridges) >= 200:
+                break
+        bridges.sort(key=lambda br: (-len(br["shared"]), br["a_id"]))
+        out["bridges"] = bridges
+        out["n_bridges"] = len(bridges)
+        linked = {b["a_investigation"] for b in bridges} | \
+                 {b["b_investigation"] for b in bridges}
+        out["sessions_linked"] = len(linked)
+    return out
+
+
 def board(db, investigation_id: int | None = None) -> dict[str, Any]:
     """One payload for the leadership view."""
     return {

@@ -1541,6 +1541,62 @@ def leadership_graph(investigation_id: int | None = None,
     return _lead.knowledge_graph(db, investigation_id)
 
 
+@app.get("/api/leadership/knowledge-graph")
+def leadership_knowledge_graph(investigation_ids: str | None = None,
+                               db: Session = Depends(get_db)):
+    """The global knowledge graph across sessions, with investigation hubs.
+
+    Node ids are namespaced (``a:`` / ``inv:``). Pass a comma-separated
+    ``investigation_ids`` to scope it; omit for the whole estate. Capped with
+    ``truncated: true`` when the estate outgrows the view.
+    """
+    from . import leadership as _lead
+    ids = _parse_ids(investigation_ids)
+    return _lead.global_graph(db, ids)
+
+
+@app.get("/api/leadership/knowledge-graph/clusters")
+def leadership_knowledge_graph_clusters(
+        mode: str = "category", investigation_ids: str | None = None,
+        db: Session = Depends(get_db)):
+    """Cluster the estate-wide graph: ``category`` (by domain) or
+    ``similarity`` (cross-session entity bridges)."""
+    if mode not in ("category", "similarity"):
+        raise HTTPException(400, "mode must be category or similarity")
+    from . import leadership as _lead
+    ids = _parse_ids(investigation_ids)
+    return _lead.global_clusters(db, ids, mode)
+
+
+def _parse_ids(raw: str | None) -> list[int] | None:
+    """Comma-separated investigation ids, or None for the whole estate."""
+    if not raw:
+        return None
+    try:
+        return [int(x) for x in raw.split(",") if x.strip()]
+    except ValueError as ve:
+        raise HTTPException(
+            400, "investigation_ids must be comma-separated ints") from ve
+
+
+# ==========================================================================
+# design documents (served from design/, never from user-supplied paths)
+# ==========================================================================
+@app.get("/api/design/docs")
+def design_docs():
+    from . import design_docs as _docs
+    return _docs.list_docs()
+
+
+@app.get("/api/design/docs/{doc_id}")
+def design_doc(doc_id: str):
+    from . import design_docs as _docs
+    out = _docs.get_doc(doc_id)
+    if not out.get("ok"):
+        raise HTTPException(404, out.get("reason", "no such document"))
+    return out
+
+
 # ==========================================================================
 # agentic manager (one command -> N investigations + a summary)
 # ==========================================================================
