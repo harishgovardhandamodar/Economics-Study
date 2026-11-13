@@ -154,6 +154,33 @@ def test_health(client):
     assert r.json()["ok"]
 
 
+def test_liveness_never_probes_dependencies(client, monkeypatch):
+    """The container healthcheck must not take the gateway down with it."""
+    def boom(*a, **kw):
+        raise AssertionError("liveness probed a dependency")
+    monkeypatch.setattr(llm, "health", boom)
+    r = client.get("/api/health/live")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "service": "economics-mapper"}
+
+
+def test_health_probe_is_cached(monkeypatch):
+    calls = []
+
+    def probe():
+        calls.append(1)
+        return {"reachable": True, "models": [], "preferred_reachable": True,
+                "fallback_active": False, "notice": None}
+
+    monkeypatch.setattr(llm, "_probe_bases", probe)
+    monkeypatch.setattr(llm, "_health_cache", {"at": 0.0, "probe": None})
+    assert llm.health()["reachable"] is True
+    assert llm.health()["reachable"] is True
+    assert len(calls) == 1
+    llm.health(force=True)
+    assert len(calls) == 2
+
+
 def test_taxonomy_is_served(client):
     r = client.get("/api/domains")
     assert r.status_code == 200

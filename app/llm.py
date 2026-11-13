@@ -119,6 +119,15 @@ def _record_fallback(base: str) -> None:
         _fallback_state["last_base"] = base
 
 
+# Health probes walk the base chain with real network timeouts, so an
+# unreachable primary costs seconds. Pollers (the GUI pill, the container
+# healthcheck) ask repeatedly; cache the probe so they do not pay that cost on
+# every request. Mutating state (fallback uses) is still read fresh below.
+HEALTH_TTL_S = float(os.environ.get("LLM_HEALTH_TTL_S", "60"))
+_health_lock = threading.Lock()
+_health_cache: dict = {"at": 0.0, "probe": None}
+
+
 def _post(base: str, payload: dict, extra_headers: dict | None = None
           ) -> tuple[dict, dict]:
     url = base + "/chat/completions"
@@ -314,17 +323,10 @@ def chat_json(messages: list, model: str = MODEL, temperature: float = 0.2,
         chat(messages, model=model, temperature=temperature, max_tokens=max_tokens))
 
 
-def health() -> dict:
-    """Gateway reachability + model inventory (best effort).
-
-    The UI branches on ``fallback_active`` to warn *before* calls are served by
-    the fallback. ``notice`` is a ready-to-show sentence.
-    """
-    out = {"base_url": BASE_URL, "fallback_url": FALLBACK_URL or None,
-           "preferred_url": BASE_URL, "model": MODEL,
-           "fallback_model": FALLBACK_MODEL, "service": service_name(),
-           "reachable": False, "models": [], "preferred_reachable": False,
-           "fallback_active": False, "notice": None}
+def _probe_bases() -> dict:
+    """Walk the base chain once and report which gateway answered."""
+    probe = {"reachable": False, "models": [], "preferred_reachable": False,
+             "fallback_active": False, "notice": None}
     for base in _bases():
         try:
             with httpx.Client(
@@ -335,20 +337,46 @@ def health() -> dict:
                 if r.status_code == 200:
                     ids = [m.get("id") for m in r.json().get("data", [])]
                     preferred_ok = (base == BASE_URL)
-                    out.update(reachable=True, via=base, served_by=base,
-                               models=ids[:30], model_available=(MODEL in ids),
-                               preferred_reachable=preferred_ok,
-                               fallback_active=not preferred_ok)
+                    probe.update(reachable=True, via=base, served_by=base,
+                                 models=ids[:30], model_available=(MODEL in ids),
+                                 preferred_reachable=preferred_ok,
+                                 fallback_active=not preferred_ok)
                     break
         except Exception:
             continue
-    if not out["reachable"]:
-        out["notice"] = "No LLM gateway is reachable."
-    elif out["fallback_active"]:
-        out["notice"] = (
+    if not probe["reachable"]:
+        probe["notice"] = "No LLM gateway is reachable."
+    elif probe["fallback_active"]:
+        probe["notice"] = (
             f"LLM calls are being served by the fallback gateway "
-            f"{_host(out['served_by'])}; the preferred gateway "
+            f"{_host(probe['served_by'])}; the preferred gateway "
             f"{_host(BASE_URL)} is unreachable.")
+    return probe
+
+
+def health(force: bool = False) -> dict:
+    """Gateway reachability + model inventory (best effort).
+
+    The UI branches on ``fallback_active`` to warn *before* calls are served by
+    the fallback. ``notice`` is a ready-to-show sentence.
+
+    The network probe is cached for ``LLM_HEALTH_TTL_S`` (default 60s). The GUI
+    status pill and the container healthcheck both poll this, and every probe
+    walks the base chain with real connect timeouts: a blackholed primary would
+    otherwise burn several seconds of a request thread on every poll.
+    ``force=True`` bypasses the cache for the explicit ``/api/llm/health`` check.
+    """
+    now = time.time()
+    with _health_lock:
+        probe = _health_cache["probe"]
+        if (force or probe is None
+                or (now - _health_cache["at"]) >= HEALTH_TTL_S):
+            probe = _probe_bases()
+            _health_cache.update(at=now, probe=probe)
+    out = {"base_url": BASE_URL, "fallback_url": FALLBACK_URL or None,
+           "preferred_url": BASE_URL, "model": MODEL,
+           "fallback_model": FALLBACK_MODEL, "service": service_name()}
+    out.update(probe)
     with _fallback_lock:
         out["fallback_uses"] = _fallback_state["uses"]
         out["last_fallback_at"] = _fallback_state["last_at"]

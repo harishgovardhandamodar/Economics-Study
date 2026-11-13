@@ -5,6 +5,12 @@ services:
   econ-mapper:
     build: .
     container_name: economics-mapper
+    # Run a real init (docker-init/tini) as PID 1 instead of uvicorn. Docker
+    # healthchecks and `docker exec` sessions are reparented to the container's
+    # PID 1; a Python process does not reap children it never waited for, so
+    # without this every such session becomes a permanent zombie. `init: true`
+    # reaps them. For a bare `docker run`, pass `--init` instead.
+    init: true
     ports:
       # Host 8310: dev server holds 8304 on this machine. The container itself
       # listens on 8304; override with HOST_PORT=xxxx.
@@ -28,8 +34,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      # /api/health is the same endpoint the GUI's top-bar indicator polls.
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8304/api/health')\" || exit 1"]
+      # Liveness, not readiness: no database, no LLM gateway. Probing a
+      # dependency here would report the container unhealthy whenever the
+      # gateway is down, and a slow probe keeps the check process alive long
+      # enough to be reparented to PID 1 (see `init: true` above).
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8304/api/health/live')\" || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

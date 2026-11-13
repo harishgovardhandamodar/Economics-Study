@@ -122,9 +122,21 @@ def health():
             "jobs": jobqueue.queue_state()["counts"]}
 
 
+@app.get("/api/health/live")
+def health_live():
+    """Liveness only: no database, no gateway probe.
+
+    The container healthcheck points here. /api/health reports readiness and
+    deliberately probes the LLM gateway, which is slow when a backend is down;
+    a healthcheck must stay fast and must not mark the app unhealthy because a
+    dependency is unavailable.
+    """
+    return {"ok": True, "service": "economics-mapper"}
+
+
 @app.get("/api/llm/health")
 def llm_health():
-    return llm.health()
+    return llm.health(force=True)
 
 
 # ==========================================================================
